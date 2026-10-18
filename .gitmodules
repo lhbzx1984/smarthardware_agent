@@ -1,0 +1,3 @@
+[submodule "vendor/text-to-cad"]
+	path = vendor/text-to-cad
+	url = https://github.com/earthtojake/text-to-cad

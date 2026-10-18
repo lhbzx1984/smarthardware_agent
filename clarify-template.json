@@ -1,0 +1,25 @@
+{
+  "_说明": "需求补全问卷的「定制层」。问卷框架（5 个分区、16 个字段、key 与题型顺序）锁死在 agent/clarify.py 的 SECTIONS/FIELDS 里，本文件改不动它 —— 这样每个产品看到的问卷结构都一样，只有选项随需求变。改完保存即生效，无需重启服务；文件写坏了也只是丢定制，问卷照常出。",
+  "_用法": {
+    "overrides": "只认已有的 16 个 key（见下）；陌生 key 会被忽略。每项可写 label / options / placeholder，留空则用内置值。",
+    "options": "写死时覆盖「按需求关键词自动挑选项」的逻辑，即所有产品都用这组固定选项；想保留随需求变化就别填这一项。",
+    "assumptions": "用户没填的项，智能体按这些默认假设推进。"
+  },
+  "_示例（取消注释即可生效）": {
+    "cost": { "options": ["≤50 元", "≤80 元", "≤120 元", "不限", "自定义金额"] }
+  },
+  "_骨架（只读，改这里无效）": {
+    "① 定位与场景": ["product_name", "category", "scenario", "core_functions"],
+    "② 形态与环境": ["form_factor", "size_limit", "environment"],
+    "③ 硬件与供电": ["power", "mcu", "modules"],
+    "④ 交互与外观": ["ui", "style", "material"],
+    "⑤ 成本与交付": ["cost", "volume", "delivery"]
+  },
+  "framework": "skeleton-v2",
+  "assumptions": [
+    "供电默认 USB 5V 直供",
+    "主控默认 Arduino UNO，便于 Cirkit Designer 仿真",
+    "结构默认 3D 打印小批量，壁厚 2.0 mm"
+  ],
+  "overrides": {}
+}

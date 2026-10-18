@@ -1,0 +1,432 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:root {
+  --bg: #f6f7f9;
+  --bg-elev: #ffffff;
+  --bg-sunken: #eef0f4;
+  --text: #14161a;
+  --text-dim: #5b6472;
+  --text-faint: #8b95a5;
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.18);
+  --accent: #534ab7;
+  --accent-soft: #eeedfe;
+  --accent-2: #0f6e56;
+  --accent-2-soft: #e1f5ee;
+  --warn: #854f0b;
+  --warn-soft: #faeeda;
+  --danger: #a32d2d;
+  --danger-soft: #fcebeb;
+  --think: #6d5ce0;
+  --think-bg: #f5f3fe;
+  --think-border: rgba(109, 92, 224, 0.22);
+  --think-text: #4b4a63;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+
+  /* PCB 背景：浅色下压到几乎看不见，只留质感 */
+  --pcb-grid: rgba(15, 23, 42, 0.05);
+  --pcb-trace: rgba(15, 23, 42, 0.11);
+  --pcb-signal: rgba(83, 74, 183, 0.28);
+  --pcb-pad: rgba(15, 23, 42, 0.15);
+  --pcb-pad-hole: rgba(246, 247, 249, 0.95);
+  --pcb-chip: rgba(15, 23, 42, 0.05);
+  --pcb-fade: #f6f7f9;
+}
+
+[data-theme="dark"] {
+  --bg: #0b0d11;
+  --bg-elev: #161a21;
+  --bg-sunken: #0a0d12;
+  --text: #e8eaee;
+  --text-dim: #a2abb9;
+  --text-faint: #6b7480;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --accent: #a99cf5;
+  --accent-soft: #26215c;
+  --accent-2: #5dcaa5;
+  --accent-2-soft: #085041;
+  --warn: #ef9f27;
+  --warn-soft: #412402;
+  --danger: #f09595;
+  --danger-soft: #501313;
+  --think: #b3a8f7;
+  --think-bg: #16142a;
+  --think-border: rgba(179, 168, 247, 0.18);
+  --think-text: #bab7ce;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
+
+  /* PCB 背景：深色下走线发光，走「上电自检」的观感 */
+  --pcb-grid: rgba(45, 212, 191, 0.055);
+  --pcb-trace: rgba(45, 212, 191, 0.22);
+  --pcb-signal: #2ee6a8;
+  --pcb-pad: rgba(45, 212, 191, 0.32);
+  --pcb-pad-hole: #070c10;
+  --pcb-chip: rgba(45, 212, 191, 0.07);
+  --pcb-fade: #080b0f;
+}
+
+/* 深色下叠两团环境光，避免纯黑平板 */
+[data-theme="dark"] body {
+  background-image: radial-gradient(1100px 620px at 10% -10%, rgba(45, 212, 191, 0.1), transparent 60%),
+    radial-gradient(900px 520px at 92% 4%, rgba(169, 156, 245, 0.13), transparent 60%);
+}
+
+/* ---------------------------------------------------------------- PCB 背景 */
+.pcb-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.pcb-bg svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.pcb-flow {
+  stroke-dasharray: 44 1100;
+  stroke-dashoffset: 1144;
+  animation-name: pcb-flow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 5px var(--pcb-signal));
+}
+
+@keyframes pcb-flow {
+  from {
+    stroke-dashoffset: 1144;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pcb-flow {
+    animation: none;
+    opacity: 0.35;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  transition: background-color 0.35s cubic-bezier(0.16, 1, 0.3, 1), color 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+.glass {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  backdrop-filter: saturate(160%) blur(12px);
+}
+
+/* 深色下给卡片一层冷色边缘辉光，贴合 PCB 背景的科技感 */
+[data-theme="dark"] .glass {
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+  border-color: rgba(45, 212, 191, 0.16);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(45, 212, 191, 0.07);
+}
+
+/* 顶部条：玻璃 + 底部一条走线色分隔 */
+.top-bar {
+  background: color-mix(in srgb, var(--bg-elev) 78%, transparent);
+  backdrop-filter: saturate(180%) blur(18px);
+  border-bottom: 1px solid var(--border);
+}
+
+[data-theme="dark"] .top-bar {
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  border-bottom-color: rgba(45, 212, 191, 0.16);
+}
+
+.logo-badge {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  box-shadow: 0 6px 18px -4px var(--accent);
+}
+
+[data-theme="dark"] .logo-badge {
+  box-shadow: 0 0 18px rgba(45, 212, 191, 0.5), 0 6px 18px -6px var(--accent);
+}
+
+.title-glow {
+  background: linear-gradient(92deg, var(--text) 0%, var(--accent) 58%, var(--accent-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn-primary {
+  box-shadow: 0 8px 22px -8px var(--accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 12px 30px -8px var(--accent);
+}
+
+[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+  box-shadow: 0 0 22px -2px var(--accent), 0 12px 30px -10px var(--accent);
+}
+
+.magnetic {
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.28s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.magnetic:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.06), 0 16px 40px rgba(15, 23, 42, 0.1);
+}
+
+.enter {
+  animation: enter 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pulse-dot {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+}
+
+/* ---------------------------------------------------- 交付完成弹窗 */
+.dialog-mask {
+  animation: mask-in 0.28s ease both;
+}
+
+@keyframes mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.dialog-card {
+  animation: card-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 主视觉渲染图：轻微放大淡入，切割感的入场比直接闪现更「成品感」 */
+.hero-img {
+  animation: hero-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-mask,
+  .dialog-card,
+  .hero-img {
+    animation: none;
+  }
+}
+
+/* 流式文本光标 */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: caret-blink 1.05s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 深度思考块 */
+.think-block {
+  backdrop-filter: saturate(150%) blur(8px);
+}
+
+.think-spark {
+  animation: spark 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes spark {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: rotate(90deg) scale(1.12);
+  }
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+}
+
+.markdown h1 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 1rem 0 0.6rem;
+}
+.markdown h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0.9rem 0 0.5rem;
+}
+.markdown h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.8rem 0 0.4rem;
+}
+.markdown p {
+  margin: 0.45rem 0;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+.markdown ul,
+.markdown ol {
+  margin: 0.45rem 0 0.45rem 1.1rem;
+  color: var(--text-dim);
+}
+.markdown li {
+  margin: 0.2rem 0;
+  line-height: 1.7;
+}
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.markdown th {
+  background: var(--bg-sunken);
+  font-weight: 600;
+}
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  background: var(--bg-sunken);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+.markdown pre {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.8rem;
+  overflow-x: auto;
+  margin: 0.6rem 0;
+}
+.markdown pre code {
+  background: none;
+  padding: 0;
+}
+.markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  margin: 0.6rem 0;
+  display: block;
+}
+.markdown blockquote {
+  margin: 0.5rem 0;
+  padding: 0.35rem 0.85rem;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-sunken);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-dim);
+}
+.markdown del {
+  opacity: 0.6;
+}

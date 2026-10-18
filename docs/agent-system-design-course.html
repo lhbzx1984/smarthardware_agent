@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>专用智能体系统设计 · 流程 / 提示词 / Harness（以智能硬件设计智能体为例）</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --panel2:#fbfcfd; --ink:#171a21; --dim:#565f70; --faint:#8b95a5;
+  --line:#e5e9f0; --line2:#eef1f6;
+  --accent:#4f46e5; --accent-soft:#eef0ff; --accent-ink:#3730a3;
+  --ok:#0f8a4d; --ok-soft:#e8f6ee; --warn:#b45309; --warn-soft:#fdf3e3; --bad:#c62f2f; --bad-soft:#fdecec;
+  --code-bg:#11141b; --code-ink:#dfe3ec;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 8px 24px rgba(16,24,40,.06);
+  --radius:16px;
+}
+html[data-theme="dark"]{
+  --bg:#0e1116; --panel:#151a22; --panel2:#11161d; --ink:#e8ecf3; --dim:#a4b0c2; --faint:#76839a;
+  --line:#232b36; --line2:#1c232c;
+  --accent:#8b8cf7; --accent-soft:#1e2140; --accent-ink:#c7c8ff;
+  --ok:#4ec98a; --ok-soft:#12261d; --warn:#e0a24a; --warn-soft:#2a2114; --bad:#f07272; --bad-soft:#2c1417;
+  --code-bg:#0b0e13; --code-ink:#dbe0ea;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  font-size:15px; line-height:1.78; -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent)}
+#bar{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--accent),#8b8cf7);width:0;z-index:60;transition:width .12s linear}
+.wrap{max-width:1220px;margin:0 auto;padding:0 22px 96px;display:grid;grid-template-columns:236px 1fr;gap:34px}
+header.hero{padding:56px 0 24px}
+.kicker{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft);padding:5px 11px;border-radius:999px;font-weight:600}
+h1{font-size:34px;line-height:1.28;margin:18px 0 10px;letter-spacing:-.02em}
+.sub{color:var(--dim);font-size:16px;max-width:760px;margin:0 0 18px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.chip{font-size:12px;color:var(--dim);background:var(--panel);border:1px solid var(--line);padding:4px 10px;border-radius:999px}
+/* nav */
+nav.side{position:sticky;top:18px;align-self:start;max-height:calc(100vh - 40px);overflow:auto;padding:6px 0 20px}
+nav.side .t{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin:0 0 10px 12px}
+nav.side a{display:block;padding:7px 12px;border-radius:10px;color:var(--dim);text-decoration:none;font-size:13.5px;border-left:2px solid transparent}
+nav.side a:hover{background:var(--panel2);color:var(--ink)}
+nav.side a.on{background:var(--accent-soft);color:var(--accent-ink);border-left-color:var(--accent);font-weight:600}
+/* sections */
+section{margin:0 0 46px;scroll-margin-top:20px}
+h2{font-size:24px;margin:8px 0 6px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+h2 .n{font-size:12px;color:var(--accent);background:var(--accent-soft);border-radius:8px;padding:3px 8px;font-weight:700}
+h3{font-size:17px;margin:26px 0 8px}
+h4{font-size:14.5px;margin:18px 0 6px;color:var(--dim)}
+p{margin:10px 0}
+.lead{color:var(--dim);font-size:14.5px;margin:4px 0 18px;max-width:820px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}nav.side{position:static;max-height:none;display:flex;gap:6px;overflow-x:auto;padding:0 0 10px}.grid2,.grid3{grid-template-columns:1fr}nav.side .t{display:none}nav.side a{white-space:nowrap}}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:12px 0}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line2);vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:12.5px;letter-spacing:.02em;background:var(--panel2)}
+tr:last-child td{border-bottom:none}
+code.inl{background:var(--panel2);border:1px solid var(--line);padding:1px 6px;border-radius:6px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace}
+pre{margin:12px 0;background:var(--code-bg);color:var(--code-ink);border-radius:14px;padding:14px 16px;overflow:auto;font-size:12.7px;line-height:1.72;font-family:ui-monospace,Menlo,Consolas,monospace}
+pre .c{color:#7d8799;font-style:italic}
+pre .s{color:#9ad4a0}
+pre .k{color:#c9a6ff}
+pre .d{color:#ffd479}
+pre .num{color:#f0a878}
+.codewrap{position:relative}
+.copy{position:absolute;top:10px;right:12px;font-size:11.5px;color:#9aa4b6;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:3px 9px;cursor:pointer}
+.copy:hover{color:#fff;background:rgba(255,255,255,.14)}
+details{border:1px solid var(--line);border-radius:12px;background:var(--panel);margin:12px 0;overflow:hidden}
+details summary{cursor:pointer;padding:12px 16px;font-weight:600;font-size:14px;list-style:none;display:flex;align-items:center;gap:8px}
+details summary::-webkit-details-marker{display:none}
+details summary::before{content:"▸";color:var(--accent);transition:transform .15s}
+details[open] summary::before{transform:rotate(90deg)}
+details .body{padding:0 16px 16px;border-top:1px solid var(--line2)}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:0 10px 10px 0;margin:12px 0;font-size:13.8px}
+.warn{border-left:3px solid var(--warn);background:var(--warn-soft);padding:10px 14px;border-radius:0 10px 10px 0;margin:12px 0;font-size:13.8px}
+.bad{border-left:3px solid var(--bad);background:var(--bad-soft);padding:10px 14px;border-radius:0 10px 10px 0;margin:12px 0;font-size:13.8px}
+.ok{border-left:3px solid var(--ok);background:var(--ok-soft);padding:10px 14px;border-radius:0 10px 10px 0;margin:12px 0;font-size:13.8px}
+.tag{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);margin-right:6px}
+.tag.p0{color:var(--bad);border-color:var(--bad);background:var(--bad-soft)}
+.tag.p1{color:var(--warn);border-color:var(--warn);background:var(--warn-soft)}
+.tag.p2{color:var(--ok);border-color:var(--ok);background:var(--ok-soft)}
+/* chain */
+.chain{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+.node{flex:1 1 150px;min-width:150px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px 12px;cursor:pointer;transition:.15s}
+.node:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.node.on{border-color:var(--accent);background:var(--accent-soft)}
+.node b{display:block;font-size:13.5px}
+.node span{font-size:11.5px;color:var(--faint);font-family:ui-monospace,Menlo,monospace}
+.panelx{margin-top:12px;border:1px dashed var(--line);border-radius:12px;padding:14px 16px;background:var(--panel2);font-size:13.8px}
+/* incident cards */
+.inc{border:1px solid var(--line);border-radius:14px;background:var(--panel);margin:12px 0;overflow:hidden}
+.inc .h{padding:12px 16px;cursor:pointer;display:flex;gap:10px;align-items:flex-start}
+.inc .h b{font-size:14.2px}
+.inc .h .sym{margin-left:auto;color:var(--faint);font-size:12px}
+.inc .b{display:none;padding:0 16px 16px;border-top:1px solid var(--line2)}
+.inc.open .b{display:block}
+.inc .kv{display:grid;grid-template-columns:88px 1fr;gap:6px 12px;font-size:13.5px;margin-top:10px}
+.inc .kv dt{color:var(--faint);font-size:12.5px}
+.inc .kv dd{margin:0}
+/* quiz */
+.q{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:16px 18px;margin:12px 0}
+.q .qt{font-weight:600;margin-bottom:10px;font-size:14.5px}
+.opt{display:block;border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin:7px 0;cursor:pointer;font-size:13.8px;transition:.12s}
+.opt:hover{background:var(--panel2)}
+.opt.right{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.opt.wrong{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+.opt.locked{cursor:default}
+.expl{display:none;margin-top:10px;font-size:13.4px;color:var(--dim);border-left:3px solid var(--line);padding-left:12px}
+/* checklist */
+.ck{display:flex;gap:10px;align-items:flex-start;padding:9px 2px;border-bottom:1px solid var(--line2);font-size:14px}
+.ck input{margin-top:5px;accent-color:var(--accent);width:16px;height:16px}
+.ck.done span{color:var(--faint);text-decoration:line-through}
+/* simulator */
+.sim{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow)}
+.sim label{display:block;font-size:13px;color:var(--dim);margin:10px 0 4px}
+.sim input[type=range]{width:100%;accent-color:var(--accent)}
+.sim .row{display:flex;justify-content:space-between;font-size:13px}
+.gauge{height:10px;border-radius:999px;background:var(--line2);overflow:hidden;margin:10px 0}
+.gauge i{display:block;height:100%;background:linear-gradient(90deg,var(--ok),var(--warn),var(--bad));width:0;transition:width .2s}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:7px 14px;font-size:13.5px;cursor:pointer}
+.btn:hover{background:var(--panel2)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.topbar{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.spacer{flex:1}
+.foot{color:var(--faint);font-size:12.5px;border-top:1px solid var(--line);padding-top:18px;margin-top:30px}
+.score{font-size:13px;color:var(--dim)}
+svg{display:block;max-width:100%;height:auto}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--dim);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div id="bar"></div>
+
+<div class="wrap">
+  <!-- ============ 侧边导航 ============ -->
+  <nav class="side">
+    <p class="t">目录</p>
+    <a href="#s0">0 · 开篇：三件事</a>
+    <a href="#s1">1 · 系统全景</a>
+    <a href="#s2">2 · 流程设计</a>
+    <a href="#s3">3 · 提示词设计</a>
+    <a href="#s4">4 · Harness 设计</a>
+    <a href="#s5">5 · 失败模式博物馆</a>
+    <a href="#s6">6 · 落地清单</a>
+    <a href="#s7">7 · 随堂测验</a>
+  </nav>
+
+  <!-- ============ 正文 ============ -->
+  <main>
+    <header class="hero">
+      <span class="kicker">Agent System Design · 教学手册</span>
+      <h1>专用智能体系统设计：流程、提示词与 Harness</h1>
+      <p class="sub">
+        通用大模型什么都能聊一点，但做不出能交付的东西。把一个领域专家的工作方式搬进智能体，
+        靠的是三件彼此咬合的事：<b>流程</b>（把工艺顺序固化成链）、<b>提示词</b>（把专家准则写进角色与契约）、
+        <b>Harness</b>（用代码把模型一定会犯的错提前挡住）。下面以本项目的「智能硬件设计智能体」为例，
+        每一节都对应仓库里真实存在的文件与参数。
+      </p>
+      <div class="meta">
+        <span class="chip">六阶段串行链 00→90</span>
+        <span class="chip">6 个子智能体</span>
+        <span class="chip">12 个领域工具</span>
+        <span class="chip">deepagents / LangGraph</span>
+        <span class="chip">build123d CAD + Agnes 出图</span>
+        <span class="chip">SQLite 事件流</span>
+      </div>
+    </header>
+
+    <!-- ================= 0 开篇 ================= -->
+    <section id="s0">
+      <h2><span class="n">0</span>开篇：专用化到底在专用什么</h2>
+      <p class="lead">
+        给模型一句「帮我设计一台智能硬件」，它会给你一篇漂亮的科普文。要让它交付可制造的东西，
+        必须把不确定性从三个层面逐个收掉 —— 而且顺序不能反：<b>先定流程，再写提示词，最后才谈 Harness</b>。
+      </p>
+
+      <div class="grid3">
+        <div class="card">
+          <h4 style="margin-top:0">① 流程 · Process</h4>
+          <p style="font-size:13.6px;color:var(--dim);margin:0">
+            专家不是想到哪做到哪，而是有固定工序与交付物。把工序写成<b>阶段链 + 交付契约</b>，
+            让「先做什么、交出什么文件」成为数据，而不是模型的临场发挥。
+          </p>
+          <p style="font-size:12.5px;color:var(--faint);margin:8px 0 0">对应：<code class="inl">agent/stages.py</code> · <code class="inl">agent/pipeline.py</code></p>
+        </div>
+        <div class="card">
+          <h4 style="margin-top:0">② 提示词 · Prompts</h4>
+          <p style="font-size:13.6px;color:var(--dim);margin:0">
+            五段式结构：角色 → 通用准则 → 交付契约 → 收尾动作 → 回交限额。
+            准则里每一条都对应一次真实事故，不写「请尽量」，只写硬约束。
+          </p>
+          <p style="font-size:12.5px;color:var(--faint);margin:8px 0 0">对应：<code class="inl">agent/subagents.py</code> · <code class="inl">main_agent.py</code></p>
+        </div>
+        <div class="card">
+          <h4 style="margin-top:0">③ Harness · 缰绳</h4>
+          <p style="font-size:13.6px;color:var(--dim);margin:0">
+            提示词会被长流程冲淡。凡是「错了代价高」的约束，都要下沉成代码：
+            门禁、幂等锁、预算护栏、人工闸门、重试与降级。
+          </p>
+          <p style="font-size:12.5px;color:var(--faint);margin:8px 0 0">对应：<code class="inl">guards / stagestate / hitl / server</code></p>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>一句话心法：</b>提示词负责「希望它怎么做」，Harness 负责「它做不到时系统仍然正确」。
+        凡是你在提示词里写了第三次还是有人违反的规则，就该下沉成代码。
+      </div>
+
+      <h3>任务 DNA：先选范式，再谈执行</h3>
+      <p>
+        不是所有需求都值得派六个子智能体跑十五分钟。本系统用三个「基因」做路由
+        （<code class="inl">agent/paradigms.py</code>）：<b>时效基因</b>（能等多久）、
+        <b>容错基因</b>（错了代价多高）、<b>进化基因</b>（这类任务会不会反复遇到）。
+        四档范式对应完全不同的执行参数，而不是换个提示词那么简单。
+      </p>
+      <table>
+        <tr><th>档位</th><th>范式</th><th>子智能体</th><th>工具预算</th><th>时限</th><th>适用</th></tr>
+        <tr><td>lean</td><td>ReAct · 边做边想</td><td>不派单，自己答</td><td>30</td><td>240s</td><td>查型号、问参数这类短查询</td></tr>
+        <tr><td>standard</td><td>Plan-and-Execute</td><td>6 个全派</td><td>150</td><td>900s</td><td>完整产品设计（默认）</td></tr>
+        <tr><td>review</td><td>+ Reflexion 反思</td><td>6 个 + 返工一轮</td><td>180</td><td>1200s</td><td>高风险词 ≥3 或同类需求踩过坑</td></tr>
+        <tr><td>explore</td><td>+ Tree of Thoughts</td><td>6 个 + 3 方案打分</td><td>220</td><td>1500s</td><td>需求模糊、多目标权衡</td></tr>
+      </table>
+      <p style="font-size:13.4px;color:var(--dim)">
+        降级链固定为 <code class="inl">explore → review → standard → lean</code>：
+        任何一档超时、超预算或工具链断裂，就往下降一档重跑，<b>而不是原地重试</b> —— 原地重试只会重复失败路径。
+      </p>
+    </section>
+
+    <!-- ================= 1 全景 ================= -->
+    <section id="s1">
+      <h2><span class="n">1</span>系统全景：谁在什么约束下干活</h2>
+      <p class="lead">
+        一次运行里有三种「智能体」：一个只做调度的主智能体、六个各干一段的子智能体，
+        以及一圈不说话的 Harness。下图是它们的真实关系。
+      </p>
+
+      <div class="card">
+        <svg viewBox="0 0 900 470" role="img" aria-label="系统架构图">
+          <rect x="0" y="0" width="900" height="470" rx="14" fill="none"/>
+          <!-- orchestrator -->
+          <rect x="330" y="14" width="240" height="46" rx="10" fill="#eef0ff" stroke="#4f46e5"/>
+          <text x="450" y="42" text-anchor="middle" font-size="13" fill="#3730a3" font-family="system-ui">Orchestrator · 任务 DNA 路由</text>
+          <line x1="450" y1="60" x2="450" y2="80" stroke="#8b95a5" stroke-width="1.5"/>
+          <!-- main -->
+          <rect x="255" y="82" width="390" height="60" rx="12" fill="#ffffff" stroke="#c7ccd6"/>
+          <text x="450" y="106" text-anchor="middle" font-size="13.5" font-weight="600" fill="#171a21" font-family="system-ui">主智能体（调度者）</text>
+          <text x="450" y="126" text-anchor="middle" font-size="11.5" fill="#565f70" font-family="system-ui">工具只有：stage_gate · confirm_with_user · write_todos · task</text>
+          <!-- arrows to subs -->
+          <path d="M300 142 L300 168" stroke="#8b95a5" stroke-width="1.5"/>
+          <path d="M600 142 L600 168" stroke="#8b95a5" stroke-width="1.5"/>
+          <path d="M300 168 L150 168 L150 190" stroke="#8b95a5" stroke-width="1.5" fill="none"/>
+          <path d="M300 168 L390 168 L390 190" stroke="#8b95a5" stroke-width="1.5" fill="none"/>
+          <path d="M600 168 L510 168 L510 190" stroke="#8b95a5" stroke-width="1.5" fill="none"/>
+          <path d="M600 168 L750 168 L750 190" stroke="#8b95a5" stroke-width="1.5" fill="none"/>
+          <!-- sub boxes -->
+          <g font-family="system-ui" font-size="11.5">
+            <rect x="60" y="190" width="180" height="42" rx="10" fill="#fbfcfd" stroke="#d9dde5"/>
+            <text x="150" y="208" text-anchor="middle" fill="#171a21">需求分析师</text><text x="150" y="224" text-anchor="middle" fill="#8b95a5" font-size="10.5">00_prd/</text>
+            <rect x="300" y="190" width="180" height="42" rx="10" fill="#fbfcfd" stroke="#d9dde5"/>
+            <text x="390" y="208" text-anchor="middle" fill="#171a21">工业设计师</text><text x="390" y="224" text-anchor="middle" fill="#8b95a5" font-size="10.5">10_appearance/</text>
+            <rect x="420" y="190" width="180" height="42" rx="10" fill="#fbfcfd" stroke="#d9dde5"/>
+            <text x="510" y="208" text-anchor="middle" fill="#171a21">结构工程师</text><text x="510" y="224" text-anchor="middle" fill="#8b95a5" font-size="10.5">20_structure/</text>
+            <rect x="660" y="190" width="180" height="42" rx="10" fill="#fbfcfd" stroke="#d9dde5"/>
+            <text x="750" y="208" text-anchor="middle" fill="#171a21">硬件 / 固件 / 评审</text><text x="750" y="224" text-anchor="middle" fill="#8b95a5" font-size="10.5">30·40·90/</text>
+          </g>
+          <!-- tools -->
+          <line x1="450" y1="232" x2="450" y2="252" stroke="#8b95a5" stroke-width="1.5"/>
+          <rect x="120" y="254" width="660" height="52" rx="12" fill="#f5f3ff" stroke="#c4b5fd"/>
+          <text x="450" y="276" text-anchor="middle" font-size="12.5" font-weight="600" fill="#4c1d95" font-family="system-ui">工具层（子智能体专属）：Agnes 出图 · build123d CAD · check_circuit · build_bom · render_schematic …</text>
+          <text x="450" y="295" text-anchor="middle" font-size="11" fill="#6d28d9" font-family="system-ui">主智能体拿不到这些 —— 越权下场是本系统曾发生的最贵事故</text>
+          <!-- harness band -->
+          <rect x="60" y="326" width="780" height="82" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+          <text x="450" y="348" text-anchor="middle" font-size="12.5" font-weight="600" fill="#9a3412" font-family="system-ui">Harness 缰绳层（不依赖模型自觉）</text>
+          <g font-family="system-ui" font-size="11">
+            <rect x="82" y="358" width="140" height="30" rx="8" fill="#fff" stroke="#fed7aa"/><text x="152" y="377" text-anchor="middle" fill="#9a3412">阶段门禁 gate()</text>
+            <rect x="234" y="358" width="140" height="30" rx="8" fill="#fff" stroke="#fed7aa"/><text x="304" y="377" text-anchor="middle" fill="#9a3412">幂等状态机</text>
+            <rect x="386" y="358" width="140" height="30" rx="8" fill="#fff" stroke="#fed7aa"/><text x="456" y="377" text-anchor="middle" fill="#9a3412">预算 / 停滞护栏</text>
+            <rect x="538" y="358" width="140" height="30" rx="8" fill="#fff" stroke="#fed7aa"/><text x="608" y="377" text-anchor="middle" fill="#9a3412">人工确认闸门</text>
+            <rect x="690" y="358" width="130" height="30" rx="8" fill="#fff" stroke="#fed7aa"/><text x="755" y="377" text-anchor="middle" fill="#9a3412">重试 / 降级</text>
+          </g>
+          <!-- persistence -->
+          <rect x="120" y="424" width="660" height="34" rx="10" fill="#ecfdf5" stroke="#6ee7b7"/>
+          <text x="450" y="446" text-anchor="middle" font-size="11.5" fill="#065f46" font-family="system-ui">产物目录 workspace/&lt;run_id&gt;/ + SQLite 事件流 + SSE 推送前端（可回放 / 可续跑 / 可打包）</text>
+        </svg>
+        <div class="legend">
+          <span><i style="background:#eef0ff;border:1px solid #4f46e5"></i>路由</span>
+          <span><i style="background:#f5f3ff;border:1px solid #c4b5fd"></i>工具（真实外部能力）</span>
+          <span><i style="background:#fff7ed;border:1px solid #fdba74"></i>Harness</span>
+          <span><i style="background:#ecfdf5;border:1px solid #6ee7b7"></i>持久化</span>
+        </div>
+      </div>
+
+      <h3>三条不能破的边界</h3>
+      <table>
+        <tr><th>边界</th><th>做法</th><th>破了会怎样</th></tr>
+        <tr>
+          <td><b>调度者不执行</b></td>
+          <td>主智能体只拿到 <code class="inl">stage_gate</code> / <code class="inl">confirm_with_user</code>；出图、建模、画电路都在子智能体手里</td>
+          <td>主智能体与子智能体各建一遍模型，同一阶段做两次，预算烧光</td>
+        </tr>
+        <tr>
+          <td><b>上下文隔离</b></td>
+          <td>子智能体各自独立上下文，只向主智能体回交 ≤400 字结论</td>
+          <td>六个专业的细节互相污染，且主智能体上下文爆炸</td>
+        </tr>
+        <tr>
+          <td><b>磁盘是唯一权威</b></td>
+          <td>「做完了」由文件是否存在判定，不看模型说了什么</td>
+          <td>上游声称完成却没落盘，下游凭想象填尺寸，评审阶段才爆</td>
+        </tr>
+      </table>
+    </section>
+
+    <!-- ================= 2 流程 ================= -->
+    <section id="s2">
+      <h2><span class="n">2</span>流程设计：把工艺顺序写成链</h2>
+      <p class="lead">
+        智能硬件的五个阶段不是五份互不相干的文档，而是一条<b>几何与电气双向约束链</b>。
+        上游产物没落盘就开工，下游只能凭想象填数字 —— 最后评审阶段的「尺寸对不上」，
+        其实是编排阶段就埋下的。
+      </p>
+
+      <div class="chain" id="chain">
+        <div class="node" data-s="00_prd"><b>需求定义</b><span>00_prd/</span></div>
+        <div class="node" data-s="10_appearance"><b>外观设计</b><span>10_appearance/</span></div>
+        <div class="node" data-s="20_structure"><b>结构设计</b><span>20_structure/</span></div>
+        <div class="node" data-s="30_hardware"><b>硬件设计</b><span>30_hardware/</span></div>
+        <div class="node" data-s="40_firmware"><b>固件与仿真</b><span>40_firmware/</span></div>
+        <div class="node" data-s="90_review"><b>交叉评审</b><span>90_review/</span></div>
+      </div>
+      <div class="panelx" id="chainPanel">点一个阶段，看它的交付契约、开工门禁与传给下游的硬约束。</div>
+
+      <h3>约束链：上游的一句话，就是下游的一个数字</h3>
+      <table>
+        <tr><th>从</th><th>传给下游的硬约束</th><th>下游若无视</th></tr>
+        <tr><td>PRD</td><td>外形尺寸上限、供电方式、成本上限、使用环境</td><td>外观做出无法量产、装不下电池的形态</td></tr>
+        <tr><td>外观</td><td><code class="inl">10_appearance/prompts.json</code> 里可量化的外形描述 + 渲染图</td><td>结构重新想象一台产品，外观图与结构图对不上</td></tr>
+        <tr><td>结构</td><td>CAD 回传的包围盒、内腔净尺寸、安装柱坐标、限高区</td><td>PCB 板框画大了装不进去；连接器落在壳壁上</td></tr>
+        <tr><td>硬件</td><td>板框 → 封装 → 层数的推导；<code class="inl">netlist.json</code> 引脚；BOM 器件</td><td>固件编造引脚号，BOM 上有器件却没人写驱动</td></tr>
+        <tr><td>固件</td><td>实际用到的引脚与外设、功耗估算</td><td>电源树带不动；仿真步骤与实物不符</td></tr>
+      </table>
+
+      <div class="note">
+        <b>设计要点：</b>阶段之间传递的必须是<b>可校验的数值</b>，不是「详见图纸」这类话。
+        本系统里 <code class="inl">pipeline.pcb_envelope()</code> 直接把结构尺寸推成板框建议：
+        内腔减 1mm 单边余量 → 板面积 → 反推封装（0402 / QFN / LQFP）与层数（2 或 4），
+        连理由都一起写进提示词。模型不用猜，猜就错。
+      </div>
+
+      <h3>流程设计的四条经验</h3>
+      <div class="grid2">
+        <div class="card"><h4 style="margin-top:0">① 串行优先，别急着并行</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">只有依赖真正独立才并行。硬件/固件看似可以并行，但固件要读 BOM 与引脚 —— 强行并行只会让两边各编一套。</p></div>
+        <div class="card"><h4 style="margin-top:0">② 契约名硬编码</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">文件名写死（<code class="inl">structure.md</code>、<code class="inl">netlist.json</code>…）。改名会让交付清单认不出它属于哪一步，用户也就打包不到它。</p></div>
+        <div class="card"><h4 style="margin-top:0">③ 门禁读磁盘，不读对话</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0"><code class="inl">gate()</code> 只看文件在不在、图是不是坏的、人确认了没。模型说「已完成」不算数。</p></div>
+        <div class="card"><h4 style="margin-top:0">④ 关卡要能重来</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">用户提修改意见 → 状态回到 <code class="inl">revised</code> → 允许且要求重做本阶段。不能重来的流程，人只能推翻重跑。</p></div>
+      </div>
+    </section>
+
+    <!-- ================= 3 提示词 ================= -->
+    <section id="s3">
+      <h2><span class="n">3</span>提示词设计：五段式 + 事故驱动</h2>
+      <p class="lead">
+        本系统的每份子智能体提示词都是同一个骨架。差别只在中间那段「这个专业要交什么」。
+        统一的骨架让六个智能体的行为可预期，也让「哪一条被违反了」一眼可查。
+      </p>
+
+      <table>
+        <tr><th style="width:110px">段落</th><th>写什么</th><th>为什么必须有</th></tr>
+        <tr><td><b>角色</b></td><td>你是谁，你的产出会被谁接着用</td><td>没有「下游是谁」，模型就会写成自洽但无用的独白</td></tr>
+        <tr><td><b>通用准则</b></td><td>跨专业一致的硬规则（见下）</td><td>每条准则背后是一次真实事故，重复成本极高</td></tr>
+        <tr><td><b>交付契约</b></td><td>必须落盘的文件名 + 每份文件的内容清单</td><td>没有文件名约束，产物就对不上交付清单，用户打包不到</td></tr>
+        <tr><td><b>收尾动作</b></td><td>做完必须 <code class="inl">confirm_with_user</code> / 必须走哪个兜底</td><td>靠模型「记得先问一句」，它一定忘</td></tr>
+        <tr><td><b>回交限额</b></td><td>向主智能体回交 ≤400 字 + 固定字段</td><td>不限额就会把整份文档贴回主上下文，几轮就爆</td></tr>
+      </table>
+
+      <h3>通用准则 COMMON_RULES：逐条都是事故换来的</h3>
+      <p>点开任意一条，看它背后的线上事故与修复方式。</p>
+
+      <div id="rules"></div>
+
+      <h3>主智能体提示词：把「调度者」写成硬约束</h3>
+      <p>
+        主智能体最容易犯的错是「自己下场干活」——它有全套工具时不干才奇怪。
+        所以提示词里第一条不是「你是总指挥」，而是<b>「你没有这些工具」</b>。
+      </p>
+      <div class="codewrap">
+        <button class="copy" data-copy="#c-main">复制</button>
+        <pre id="c-main"><code>【你的角色：调度者，不是执行者 —— 这是硬约束】
+- 你**没有**出图 / 建模 / 画原理图 / 校验电路 / 生成 BOM 的工具，也拿不到 save_artifact。
+  阶段产出物一律通过 task 委派给对应子智能体完成；你自己下场干只会把同一阶段做两遍。
+- 你手里的自定义工具只有两个：`stage_gate`（查门禁）和 `confirm_with_user`（请人确认）。
+
+【每个阶段只派一次 —— 重复派单是本系统最常见的失败模式】
+- 一个阶段**只能委派一次**。子智能体回交后，用 ls 核对产物是否落盘：
+  - 落盘了 → 立刻进入下一阶段（需要人工确认的阶段先 confirm_with_user）。
+  - 没落盘 → 让**同一个**子智能体补做（补充指令写清缺哪个文件），不要重新派一个新实例
+    从头再来 —— 新实例没有上下文，会把已做好的东西推翻重做一遍。
+- 严禁「先派一次看看，再派一次确认」：实测这样会让 PRD 被写两遍、外观图出两遍、
+  同一份产品图被请用户确认两次。</code></pre>
+      </div>
+
+      <details>
+        <summary>子智能体提示词范例：工业设计师（出图链路最难的一段）</summary>
+        <div class="body">
+          <p style="font-size:13.6px;color:var(--dim)">
+            出图最怕两件事：同一台产品画出几代外形；以及「图生图」与「文生图」混用。
+            所以提示词把调用顺序写成了步骤，连「第二张只描述要改成什么样」都写死了。
+          </p>
+          <div class="codewrap">
+            <button class="copy" data-copy="#c-id">复制</button>
+            <pre id="c-id"><code>【必须出真实渲染图 —— 由 Agnes 出图，且必须串行、前后同源】
+工具默认 reference="auto"：第二张起会自动以**上一张产品图**为参考做图生图，
+同一台产品不会画出两代外形。
+
+**必须一张一张串行生成，禁止把几个 prompt 攒在一起或并行调用**：
+1. 第一次调用 generate_product_image(kind="render")：产品主视角渲染图。
+   这张图是后面所有图的**基线**。等它返回、确认文件已落盘后，再进行下一步。
+2. 第二次调用 generate_product_image(kind="render")：只描述「要改成什么样」
+   （例如「换成 45 度侧视」），**不要重复描述产品本身** ——
+   产品长什么样由参考图决定，重写一遍反而会让模型把产品改掉。
+
+【你写的提示词会被结构阶段复用 —— 写准一点】
+每次出图用的 prompt 会自动存档到 10_appearance/prompts.json，结构工程师就是拿它去做
+3D 建模的形状约束。所以 prompt 里**必须写清可量化的外形信息**：整体形态、长宽高比例、
+主色与材质、可见特征（屏幕/按键/接口的位置）。写「科技感十足的小夜灯」这种形容词，
+结构阶段就只能瞎猜尺寸。</code></pre>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>兜底链：允许失败，但不允许「假装成功」</summary>
+        <div class="body">
+          <p style="font-size:13.6px;color:var(--dim)">
+            外部服务一定会失败。与其祈祷，不如<b>把失败写进流程</b>：失败时的产物、
+            写什么、最多重试几次，全部提前规定。
+          </p>
+          <ul style="font-size:13.8px;color:var(--dim)">
+            <li><b>出图失败</b>：错误含「鉴权失败」→ 立即停止调用（重试多少次都一样）；超时/限流 → 换中性 prompt 重试最多 2 次。</li>
+            <li><b>兜底产物</b>：<code class="inl">orthographic.svg</code>（手写三视图，离线可出）+ 文档里注明「AI 图不可用，形状以工程视图为准」。</li>
+            <li><b>建模失败</b>：照真实报错的行号改，最多 3 次；仍失败就在文档写失败原因 + 参数化尺寸表。</li>
+            <li><b>绝对禁止</b>：<code class="inl">placeholder</code> / <code class="inl">TODO</code> / 「略」这类占位内容，以及伪造尺寸。</li>
+          </ul>
+        </div>
+      </details>
+
+      <h3>提示词写作的六条检查项</h3>
+      <div class="card">
+        <ol style="margin:0;padding-left:20px;font-size:13.8px;color:var(--dim)">
+          <li>每一条约束都能指出「不这么做会发生什么」—— 指不出就删掉，那是噪音。</li>
+          <li>能用代码保证的，不要在提示词里重复第三次（重复说明它该下沉了）。</li>
+          <li>给出<b>正例</b>而不只是禁令：写「用 fillet(builder.edges()...）」比「别写错 API」有效。</li>
+          <li>把失败路径写出来：什么错该重试、什么错该放弃、放弃时留下什么。</li>
+          <li>动作必须有宾语：<code class="inl">confirm_with_user(stage="10_appearance")</code> 而不是「记得让用户确认」。</li>
+          <li>回交内容定长定字段：≤400 字 + 固定几个要点，主上下文才不会被撑爆。</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ================= 4 Harness ================= -->
+    <section id="s4">
+      <h2><span class="n">4</span>Harness 设计：把「一定会犯的错」提前挡住</h2>
+      <p class="lead">
+        这一节是本报告的核心。下面七个部件，每一个都对应一句「提示词里写了但还是有人违反」的规则。
+        它们共同的原则是：<b>判据读磁盘、读状态文件，不读模型的自我声明</b>。
+      </p>
+
+      <h3>4.1 工具白名单：从能力上杜绝越权</h3>
+      <table>
+        <tr><th>角色</th><th>拿到的工具</th><th>设计意图</th></tr>
+        <tr>
+          <td>主智能体</td>
+          <td><code class="inl">stage_gate</code>、<code class="inl">confirm_with_user</code>、<code class="inl">write_todos</code>、<code class="inl">task</code>、内置只读文件工具</td>
+          <td>它只能查状态、派单、请人确认。想干活？只能派单。</td>
+        </tr>
+        <tr>
+          <td>子智能体</td>
+          <td>全部 12 个领域工具（出图 / CAD / 电路校验 / BOM / 网表 / 门禁 / 确认）</td>
+          <td>专业活由专业角色干，上下文隔离，只回交结论。</td>
+        </tr>
+      </table>
+      <div class="codewrap">
+        <button class="copy" data-copy="#c-tools">复制</button>
+        <pre id="c-tools"><code># agent/main_agent.py
+# 主智能体只拿「调度用」的自定义工具 —— 出图/建模/校验一律不给它。
+# 线上事故：主智能体拿着全套工具自己下场调 text_to_cad 建模，而子智能体也在建，
+# 同一阶段被做两遍，预算烧光跑到 5/6 阶段就被迫中止。
+MAIN_TOOLS = [stage_gate, confirm_with_user]</code></pre>
+      </div>
+
+      <h3>4.2 阶段门禁 gate()：磁盘是唯一权威</h3>
+      <p>
+        每个子智能体开工第一步不是「开始设计」，而是 <code class="inl">stage_gate("自己的阶段")</code>。
+        它返回三件事：能不能开工、缺什么、上游传下来哪些硬约束。
+      </p>
+      <table>
+        <tr><th>阶段</th><th>门禁额外判据</th><th>拦住的典型错误</th></tr>
+        <tr><td>20_structure</td><td>外观图存在且不是坏图（11 字节的 <code class="inl">placeholder</code> 会被识别）</td><td>拿假图建模，整条链报废</td></tr>
+        <tr><td>30_hardware</td><td>能从 <code class="inl">consistency.md</code> 读到外形尺寸，并自动推板框/封装/层数</td><td>板框画大装不进去</td></tr>
+        <tr><td>40_firmware</td><td>存在 <code class="inl">netlist.json</code> 或 <code class="inl">bom.csv</code></td><td>编造引脚号写驱动</td></tr>
+        <tr><td>所有下游</td><td>外观 / 结构必须已有<b>用户确认记录</b></td><td>没人看过的外观一路跑到评审</td></tr>
+      </table>
+      <div class="warn">
+        门禁的价值不在于「拦」，而在于<b>拦的时候告诉模型该干什么</b>。
+        返回里带着 <code class="inl">missing</code> 与可执行建议（「请先调用 confirm_with_user(stage=…)」），
+        模型才能自我纠偏，而不是卡死或硬闯。
+      </div>
+
+      <h3>4.3 幂等状态机：让「同一阶段做两遍」在工具层做不成</h3>
+      <p>
+        提示词里写「不要重复做」在长流程里必然失效。所以把每个阶段的状态落到
+        <code class="inl">XX_stage/_stage.json</code>，并让<b>昂贵工具在开工前先问一次这个状态</b>。
+      </p>
+      <div class="card">
+        <svg viewBox="0 0 820 130" role="img" aria-label="阶段状态机">
+          <g font-family="system-ui" font-size="11.5">
+            <rect x="10" y="40" width="110" height="44" rx="10" fill="#f1f5f9" stroke="#cbd5e1"/><text x="65" y="67" text-anchor="middle" fill="#475569">pending</text>
+            <rect x="160" y="40" width="110" height="44" rx="10" fill="#eef0ff" stroke="#4f46e5"/><text x="215" y="67" text-anchor="middle" fill="#3730a3">working</text>
+            <rect x="310" y="40" width="110" height="44" rx="10" fill="#e8f6ee" stroke="#0f8a4d"/><text x="365" y="67" text-anchor="middle" fill="#0b6b3c">done</text>
+            <rect x="460" y="40" width="110" height="44" rx="10" fill="#e8f6ee" stroke="#0f8a4d"/><text x="515" y="67" text-anchor="middle" fill="#0b6b3c">confirmed</text>
+            <rect x="640" y="40" width="140" height="44" rx="10" fill="#fdf3e3" stroke="#b45309"/><text x="710" y="67" text-anchor="middle" fill="#92400e">revised（要求重做）</text>
+            <g stroke="#8b95a5" stroke-width="1.4" fill="none">
+              <path d="M120 62 L156 62"/><path d="M270 62 L306 62"/><path d="M420 62 L456 62"/>
+              <path d="M515 84 L515 108 L710 108 L710 88" stroke-dasharray="4 3"/>
+            </g>
+            <text x="612" y="122" text-anchor="middle" fill="#8b95a5" font-size="10.5">用户提修改意见 → 解锁重做</text>
+          </g>
+        </svg>
+      </div>
+      <div class="codewrap">
+        <button class="copy" data-copy="#c-guard">复制</button>
+        <pre id="c-guard"><code># agent/stagestate.py —— 昂贵工具开工前的幂等闸
+EXPENSIVE_TOOLS = {
+    "generate_product_image": "10_appearance",   # 出图：贵，且会覆盖已确认的基线图
+    "text_to_cad":            "20_structure",    # 建模：贵，下游全靠它
+    "render_schematic":       "30_hardware",
+    ...
+}
+
+def guard(root, sid, tool, files=None) -> str:
+    """返回空串 = 放行，非空 = 拒绝理由（直接回给模型）。"""
+    d = load(root, sid)            # 读 XX_stage/_stage.json
+    if d["status"] in (PENDING, WORKING, REVISED):
+        return ""                  # 没做过 / 正在做 / 用户要求改 —— 放行
+    if d["status"] == CONFIRMED:
+        return (f"⛔ {sid} 本阶段产物已生成并经用户确认，不要再调用 {tool} 重做一遍。"
+                "\n重复执行会覆盖已确认的产物、烧掉预算，并把同一份东西再请用户确认一次。")</code></pre>
+      </div>
+      <div class="note">
+        <b>只对「贵且会覆盖产物」的工具上锁。</b>文档写入（补一份漏写的 md）不锁 ——
+        补文档是合理的，重出一张 700 KB 的渲染图不是。锁得太狠会把正常迭代也挡住。
+      </div>
+
+      <h3>4.4 人工确认闸门：让流程真的停下来等人</h3>
+      <p>
+        外观图出来长什么样、结构能不能装，只有人看了才算数。这两个阶段做完必须<b>挂起整条流程</b>，
+        等用户在界面上确认或填修改意见。而且等待<b>不计入运行时间</b>，不会把一次等人变成一次超时。
+      </p>
+      <div class="card" style="font-size:13.7px">
+        <div id="hitlDemo">
+          <p style="margin:0 0 10px"><b>交互演示：</b>模拟一次 <code class="inl">confirm_with_user(stage="10_appearance", rounds=N)</code></p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button class="btn" onclick="hitl(1)">① 首次提交（rounds=1）</button>
+            <button class="btn" onclick="hitl(1)">② 同一轮重复调用（rounds=1）</button>
+            <button class="btn" onclick="hitl(2)">③ 用户提意见后重做（rounds=2）</button>
+            <button class="btn" onclick="hitlReset()">重置</button>
+          </div>
+          <pre id="hitlOut" style="margin-top:12px;min-height:76px">等待调用…</pre>
+        </div>
+      </div>
+      <div class="warn">
+        <b>去重是必须的。</b>实测一次运行里同一个确认被挂起等待了三次（14.7s / 101s / 24.7s）。
+        现在按 <code class="inl">rounds</code> 判重：同一轮重复调用直接返回上一次结论，不再阻塞；
+        轮次 +1 才真正等待。
+      </div>
+
+      <h3>4.5 护栏：预算、停滞与重复调用</h3>
+      <p>
+        同一个需求跑两次，事件数 8 万 vs 34 万、工具 72 次 vs 239 次 —— 差异不是随机的。
+        没有预算的自主循环，模型可以连续思考十几分钟不落一个产物，也能把同一个工具用同样的参数反复调上百次。
+      </p>
+
+      <div class="sim">
+        <h4 style="margin-top:0">预算模拟器：按「代价」加权，而不是按次数</h4>
+        <p style="font-size:13px;color:var(--dim);margin:0 0 8px">
+          拖动滑块，看一次运行在 standard 档（预算 150）下消耗了多少。只读调用按 0.1 计，
+          <code class="inl">stage_gate</code> 这类纯磁盘判据也是 0.1，出图 / CAD 按 1.0 计。
+        </p>
+        <label>只读调用（ls / read_file / glob / grep）· 权重 0.1 — <b id="v1">60</b> 次</label>
+        <input type="range" id="r1" min="0" max="300" value="60" oninput="budget()">
+        <label>门禁查询 stage_gate · 权重 0.1 — <b id="v2">10</b> 次</label>
+        <input type="range" id="r2" min="0" max="60" value="10" oninput="budget()">
+        <label>文档落盘 save_artifact · 权重 1.0 — <b id="v3">12</b> 次</label>
+        <input type="range" id="r3" min="0" max="60" value="12" oninput="budget()">
+        <label>昂贵调用（出图 / CAD / BOM）· 权重 1.0 — <b id="v4">14</b> 次</label>
+        <input type="range" id="r4" min="0" max="60" value="14" oninput="budget()">
+        <div class="gauge"><i id="gbar"></i></div>
+        <div class="row"><span id="btext">—</span><span id="bverdict"></span></div>
+        <p style="font-size:12.5px;color:var(--faint);margin:8px 0 0">
+          对比：若所有调用都按 1.0 计，同样的行为会消耗 <b id="bnaive">—</b> 次 —— 这正是早期版本
+          80 次预算跑到 5/6 阶段就中止的原因。
+        </p>
+      </div>
+
+      <table>
+        <tr><th>护栏</th><th>判据</th><th>为什么这样定</th></tr>
+        <tr><td>停滞中止</td><td>距上次「实质进展」超过 120s 才算空转</td><td>时间本身不是失败信号，<b>停滞</b>才是。实测一次运行 904s 被砍，产物明明还在增加</td></tr>
+        <tr><td>进展定义</td><td>只有写类工具成功 / 磁盘出现新产物才算</td><td>只读返回值不算进展 —— 否则「反复回读自己写的报告」会被判成在前进</td></tr>
+        <tr><td>重复调用</td><td>只读 24 次 / 同一文件 10 次 / 参数抓不到时 15 次</td><td>分档阈值：只读幂等无副作用，误杀成本远高于写类工具</td></tr>
+        <tr><td>参数签名</td><td>args 不完整（空串 / 半截 JSON / 占位 <code class="inl">{}</code>）时挂起等待再判</td><td>流式工具调用的 args 首发常为空，拿它当去重键会把读 5 个不同文件算成重复 5 次</td></tr>
+        <tr><td>超时续期</td><td>到点但仍在进展 → 自动延长 600s；真到硬上限 → 按阶段存盘点自动续跑（最多 2 轮）</td><td>硬墙会把「正在稳定产出」的运行砍掉；续跑复用同一工作区，从下一个未完成阶段接着做</td></tr>
+      </table>
+
+      <div class="bad">
+        <b>中止的定性要和交付状态挂钩。</b>产物已够时按「目标达成」收尾，别显示「超出预算中止」——
+        东西都在却报失败，比真失败更伤信任。本系统里这是 <code class="inl">RunGoal</code> 异常，
+        <code class="inl">status="done"</code>，error 字段留空。
+      </div>
+
+      <h3>4.6 网络层：区分「断了」与「排队」</h3>
+      <p>
+        外部网关的失败形态差别极大，一把尺子量到底会浪费大量时间。本节是刚刚排障时补的一层，
+        实测数据来自本机：
+      </p>
+      <table>
+        <tr><th>探测项</th><th>结果</th><th>结论</th></tr>
+        <tr><td>DNS / TCP / TLS</td><td>0.02s / 0.19s / TLSv1.3</td><td>链路没问题</td></tr>
+        <tr><td>GET /models</td><td>200（0.9–1.8s）</td><td>密钥与服务正常</td></tr>
+        <tr><td>POST /chat/completions</td><td>12.8s（flash）/ 1.4s（pro-alpha）</td><td><b>网关在排队</b>，不是网络中断</td></tr>
+        <tr><td>流式首字节</td><td>17.4s，偶发 &gt;60s 断开</td><td>表现为 <code class="inl">OpenAIConnectionError</code>，容易被误判成「网挂了」</td></tr>
+      </table>
+      <div class="codewrap">
+        <button class="copy" data-copy="#c-net">复制</button>
+        <pre id="c-net"><code># connect / read 分开给：网关排大队时「连得上但要等很久」，
+# 一个统一的 300s 超时只会让整轮卡死五分钟才报错。
+LLM_CONNECT_TIMEOUT = 15      # 连不上就是连不上
+LLM_READ_TIMEOUT    = 120     # 排队可以等，但别等太久
+LLM_MAX_RETRIES     = 4       # SDK 层
+NET_RETRY_MAX       = 4       # 编排层整体重跑，退避 12/24/36s
+NET_FALLBACK_AFTER  = 2       # 连续 2 次网络类失败 → 换模型再试
+
+# 换模型前先确认目标模型在这个网关真的存在：
+# 拿 A 家的模型名去打 B 家的端点只会 404，白换一次还多等一轮。
+def _switch_fallback_model(run) -> str: ...</code></pre>
+      </div>
+      <div class="ok">
+        <b>分类处理才是关键：</b>SSL 证书被换（中间人）→ 不重试，直接给人话提示；
+        429 限流 → 等窗口过去再试（立刻重试只会再撞一次）；连接类 → 退避重跑 + 必要时换模型。
+        这三类混在一起处理，就是「看起来在重试，其实一直在做无用功」。
+      </div>
+
+      <h3>4.7 事件流与持久化：让一次运行可回放、可续跑、可交付</h3>
+      <div class="grid2">
+        <div class="card"><h4 style="margin-top:0">事件流</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">SSE 逐条推（保住打字机效果），落库时按 0.5s / 1500 字聚合 —— 一次运行 6966 事件不至于把库写爆。心跳 2s 一条，前端能区分「还在跑」和「卡死了」。</p></div>
+        <div class="card"><h4 style="margin-top:0">可续跑</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">产物在 <code class="inl">workspace/&lt;run_id&gt;/</code>，SQLite 只存索引与元数据；超时后按阶段存盘点自动再开一轮，从下一个未完成阶段接着做。</p></div>
+        <div class="card"><h4 style="margin-top:0">交付清单</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">规划项标题 → 阶段分组（关键词映射），产物逐个可单独下载，也可按阶段或全量打包，包内附一份「交付清单.md」。</p></div>
+        <div class="card"><h4 style="margin-top:0">安全第一</h4>
+          <p style="font-size:13.5px;color:var(--dim);margin:0">设置落库前剥掉一切凭据字段（<code class="inl">api_key → ***</code>）；路径越界在后端层拦，模型拿到的是可纠错的 error 而不是 traceback。</p></div>
+      </div>
+    </section>
+
+    <!-- ================= 5 失败模式 ================= -->
+    <section id="s5">
+      <h2><span class="n">5</span>失败模式博物馆：九个真实事故</h2>
+      <p class="lead">
+        下面每一条都真的发生过。读它们比读十页方法论有用 ——
+        点开看「现象 → 根因 → 修复 → 教训」。
+      </p>
+      <div id="incidents"></div>
+    </section>
+
+    <!-- ================= 6 清单 ================= -->
+    <section id="s6">
+      <h2><span class="n">6</span>落地清单：照着做一遍</h2>
+      <p class="lead">勾勾选选，进度会记在本机浏览器里（localStorage）。</p>
+      <div class="card" id="checklist"></div>
+    </section>
+
+    <!-- ================= 7 测验 ================= -->
+    <section id="s7">
+      <h2><span class="n">7</span>随堂测验</h2>
+      <p class="lead">六道题，答完看解析。都是上面出现过的内容。</p>
+      <div id="quiz"></div>
+      <div class="card" style="margin-top:14px;display:flex;align-items:center;gap:14px">
+        <span class="score" id="qscore">已作答 0 / 6，正确 0</span>
+        <span class="spacer"></span>
+        <button class="btn" onclick="resetQuiz()">重做</button>
+      </div>
+    </section>
+
+    <p class="foot">
+      本报告的每条规则、每个参数都对应仓库中真实存在的实现：<code class="inl">agent/</code> 下的
+      <code class="inl">paradigms.py</code>（路由）、<code class="inl">pipeline.py</code>（门禁与约束传递）、
+      <code class="inl">stagestate.py</code>（幂等锁）、<code class="inl">guards.py</code>（护栏信号）、
+      <code class="inl">subagents.py</code>（子智能体提示词）、<code class="inl">main_agent.py</code>（主智能体与工具白名单）、
+      <code class="inl">config.py</code>（全部可调参数）。
+    </p>
+  </main>
+</div>
+
+<script>
+/* ---------------- 阅读进度 + 导航高亮 ---------------- */
+const bar = document.getElementById("bar");
+addEventListener("scroll", () => {
+  const h = document.documentElement;
+  bar.style.width = (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + "%";
+});
+const links = [...document.querySelectorAll("nav.side a")];
+const secs = links.map(a => document.querySelector(a.getAttribute("href")));
+const io = new IntersectionObserver(es => {
+  es.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.remove("on"));
+      const i = secs.indexOf(e.target);
+      if (i >= 0) links[i].classList.add("on");
+    }
+  });
+}, { rootMargin: "-20% 0px -70% 0px" });
+secs.forEach(s => s && io.observe(s));
+
+/* ---------------- 代码高亮 + 复制 ---------------- */
+function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+const RE = /(#[^\n]*)|("""[\s\S]*?"""|"[^"\n]*"|'[^'\n]*')|(@[A-Za-z_]\w*)|\b(def|class|return|if|elif|else|for|while|in|not|and|or|None|True|False|import|from|with|as|try|except|raise|lambda|int|str|float|bool)\b|\b(\d+(?:\.\d+)?)\b/g;
+document.querySelectorAll("pre code").forEach(el => {
+  const txt = el.textContent;
+  el.innerHTML = esc(txt).replace(RE, (m, c, s, d, k, n) =>
+    c ? `<span class="c">${c}</span>` :
+    s ? `<span class="s">${s}</span>` :
+    d ? `<span class="d">${d}</span>` :
+    k ? `<span class="k">${k}</span>` :
+    `<span class="num">${n}</span>`);
+});
+document.querySelectorAll(".copy").forEach(b => {
+  b.onclick = () => {
+    const code = document.querySelector(b.dataset.copy).querySelector("code");
+    navigator.clipboard.writeText(code.textContent).then(() => {
+      b.textContent = "已复制"; setTimeout(() => b.textContent = "复制", 1200);
+    });
+  };
+});
+
+/* ---------------- 阶段链 ---------------- */
+const STAGES = {
+  "00_prd": { name:"需求定义", files:"prd.md", gate:"无上游依赖（起点）",
+    pass:"外形尺寸上限、供电方式、续航、成本上限、使用环境、验收指标表" },
+  "10_appearance": { name:"外观设计", files:"appearance.md · orthographic.svg · render-prompts.md · render-01.png",
+    gate:"00_prd/prd.md 已落盘", pass:"prompts.json（可量化的外形描述）+ 渲染图 —— 结构照它建模；出图后必须等人确认" },
+  "20_structure": { name:"结构设计", files:"structure.md · model.py · model_*.step / .stl · model_preview.svg · exploded-01.png",
+    gate:"外观有图且不是坏图；外观已确认", pass:"CAD 包围盒、内腔净尺寸、安装柱坐标与孔径、限高区、开孔坐标 —— 硬件照它定板框" },
+  "30_hardware": { name:"硬件设计", files:"hardware.md · pcb-layout.md · netlist.json · bom.csv · schematic.svg · cirkit-steps.md",
+    gate:"能读到结构外形尺寸；结构已确认", pass:"引脚分配、器件型号与封装、BOM、电源树 —— 固件照它写驱动" },
+  "40_firmware": { name:"固件与仿真", files:"firmware.ino · simulation.md",
+    gate:"存在 netlist.json 或 bom.csv", pass:"实际用到的引脚、功耗估算、仿真用例表" },
+  "90_review": { name:"交叉评审", files:"review.md",
+    gate:"五个阶段产物齐全", pass:"一致性核对表 + P0/P1/P2 问题清单 + 能否打样" }
+};
+const panel = document.getElementById("chainPanel");
+document.querySelectorAll("#chain .node").forEach(n => {
+  n.onclick = () => {
+    document.querySelectorAll("#chain .node").forEach(x => x.classList.remove("on"));
+    n.classList.add("on");
+    const s = STAGES[n.dataset.s];
+    panel.innerHTML = `<b>${n.dataset.s} · ${s.name}</b><br>
+      交付契约：<code class="inl">${s.files}</code><br>
+      开工门禁：${s.gate}<br>
+      传给下游：${s.pass}`;
+  };
+});
+
+/* ---------------- COMMON_RULES 卡片 ---------------- */
+const RULES = [
+  ["0","开工先调 stage_gate","拿上游产物与硬约束，不要在没读上游的情况下凭印象开工",
+   "结构阶段自己另编一套尺寸，做出来的壳和外观图完全不是一台产品 —— 而「外观图与结构图对不上」的根因就在这里。"],
+  ["0b","阶段已完成就别重做","gate 说 done/confirmed 时直接回交产物清单 + 关键结论",
+   "同一阶段被主智能体与子智能体各做一遍：PRD 写两遍、外观图出两遍、同一份产品图请用户确认两次，预算被吃光跑到 5/6 就被迫中止。"],
+  ["2","交付文件必须落盘","每个交付文件走 save_artifact，路径带阶段前缀，虚拟根是 /",
+   "只把内容写在回复里，用户看不到任何产物；写 /home/user/... 则一律 No such file。"],
+  ["3","事实性结论用工具验证","元件查 search_cirkit_docs、电路查 check_circuit、固件查 check_arduino、物料查 build_bom",
+   "模型凭记忆写的元件型号与引脚，评审阶段被逐条挑出来 —— 而校验工具几秒钟就能发现。"],
+  ["6","二进制产物只能专用工具生成","图片只走出图工具，STEP/STL 只走 CAD，原理图走 render_schematic",
+   "出图成功后有人又用 save_artifact 把 700 KB 的渲染图覆盖成 11 字节的 placeholder，两张图全打不开，外观→结构整条链被毁。"],
+  ["6b","已生成的图/模型不要再写","要换视角就再调一次出图（自动顺延 render-02.png），绝不覆盖",
+   "「用户看到的图」和「结构拿去建模的图」变成两代不同的产品，评审才发现已经晚了。"],
+  ["—","交付里不许有占位内容","禁止 placeholder / TODO / 略",
+   "写不出来就如实说明卡在哪 —— 假文件比缺失更糟，用户会以为拿到了交付物。"],
+  ["—","回交限额 400 字","只回交关键结论字段，不贴整份文档",
+   "不限额就会把整份文档贴回主上下文，几轮之后主智能体上下文爆炸、开始胡乱派单。"]
+];
+const rbox = document.getElementById("rules");
+rbox.innerHTML = RULES.map(([no, title, rule, story]) => `
+  <div class="inc">
+    <div class="h"><span class="tag">规则 ${no}</span><b>${title}</b><span class="sym">展开 ▾</span></div>
+    <div class="b">
+      <p style="margin:8px 0 0;font-size:13.8px">${rule}</p>
+      <dl class="kv"><dt>真实事故</dt><dd>${story}</dd></dl>
+    </div>
+  </div>`).join("");
+
+/* ---------------- 失败模式 ---------------- */
+const INCIDENTS = [
+  ["P0","PRD 写两遍、产品图确认两次","主智能体拿着全套工具自己下场干，子智能体也在干；两方各拿一份上下文，谁都不知道对方做过什么",
+   "主智能体工具白名单收敛到 stage_gate + confirm_with_user；阶段状态机落盘；confirm 按 rounds 去重",
+   "能靠工具权限解决的，就不要靠提示词自觉"],
+  ["P0","80 次预算耗尽，只产出 5/6 阶段","所有工具调用按 1.0 计费，光「开工前查门禁」就吃掉十分之一预算；同时重复执行又烧掉一大半",
+   "按代价加权（只读 0.1 / 昂贵 1.0）；档位预算提高到 150（standard）；删除重复执行",
+   "预算是设计参数，不是默认值；要按真实消耗校准"],
+  ["P0","700 KB 渲染图被覆盖成 11 字节","用文本工具去写二进制产物",
+   "后端 write/edit 拦截二进制路径；门禁区分「有效图片」与「坏图」，有坏图且无好图时直接拦住下游",
+   "路径存在 ≠ 文件可用；判据必须看内容"],
+  ["P1","运行 904 秒被砍，产物还在增加","时限是硬墙：到点就中止，理由是「时间到了」而不是「卡住了」",
+   "改为停滞才中止：距上次实质进展 >120s 才算空转；到点仍在进展则自动续期；真到硬上限自动续跑",
+   "时间不是失败信号，停滞才是"],
+  ["P1","只读工具被判成无效循环","read_file 被当成「重复调用」，而子智能体各自读一遍 AGENTS.md 本是正常协作；只读返回值还被算作「进展」，等于给反复回读发免死金牌",
+   "阈值分档（只读 24 / 同文件 10 / 无参 15）；明确「只读不算进展」",
+   "护栏的判据错了，比没有护栏更糟 —— 它会在正确行为上失灵"],
+  ["P1","工作区内文件被判 outside root","Windows 下 Path.resolve() 加 \\\\?\\ 前缀，越界判定认不出它",
+   "WorkspaceBackend 自解析：纯字符串归一 + 前缀比较，并把 ValueError 转成 result.error 让模型自我纠正",
+   "宿主环境的怪癖要在适配层消化掉，不要丢给模型"],
+  ["P2","/health 500","paradigm 字段可能为 None 导致聚合崩；reflexions 表查询在连接初始化竞态下返回 None",
+   "空值回落 standard；连接先在局部建好再挂到全局；只读统计全部 try/except",
+   "健康检查不能背业务逻辑的锅，它必须是只读且打不死的"],
+  ["P2","前端 datalist 报同 key 告警","网关 /models 返回重复 id，且当前模型可能已在列表里",
+   "去重 + 复合 key（value#index）",
+   "外部数据一律先去重再渲染，别假设上游干净"],
+  ["P1","网关被判成「网络挂了」","DNS/TCP/TLS 全部正常，但 /chat/completions 排队 12–17s，偶发 >60s 断开，表现为连接错误",
+   "connect 15s / read 120s 分离；退避重试 4 次；连续 2 次失败换模型（先校验目标模型在该网关存在）",
+   "先分层探测再定性：断线和排队的处置完全相反"]
+];
+const ibox = document.getElementById("incidents");
+ibox.innerHTML = INCIDENTS.map(([lv, title, cause, fix, lesson]) => `
+  <div class="inc">
+    <div class="h"><span class="tag ${lv.toLowerCase()}">${lv}</span><b>${title}</b><span class="sym">展开 ▾</span></div>
+    <div class="b">
+      <dl class="kv">
+        <dt>根因</dt><dd>${cause}</dd>
+        <dt>修复</dt><dd>${fix}</dd>
+        <dt>教训</dt><dd><b>${lesson}</b></dd>
+      </dl>
+    </div>
+  </div>`).join("");
+
+document.querySelectorAll(".inc .h").forEach(h => {
+  h.onclick = () => {
+    const box = h.parentElement;
+    box.classList.toggle("open");
+    h.querySelector(".sym").textContent = box.classList.contains("open") ? "收起 ▴" : "展开 ▾";
+  };
+});
+
+/* ---------------- 人工闸门演示 ---------------- */
+let hitlState = { status: "pending", rounds: 0 };
+function hitl(rounds){
+  const out = document.getElementById("hitlOut");
+  if (hitlState.status === "confirmed" && rounds <= hitlState.rounds) {
+    out.textContent =
+      `→ confirm_with_user(stage="10_appearance", rounds=${rounds})\n` +
+      `⏭ 已经在本轮确认过（第 ${hitlState.rounds} 轮），不再阻塞等待，直接返回上次结论。\n` +
+      `   产物：10_appearance/render-01.png（-02/-03）已确认，可进入 20_structure。`;
+    return;
+  }
+  hitlState = { status: "confirmed", rounds };
+  out.textContent =
+    `→ confirm_with_user(stage="10_appearance", rounds=${rounds})\n` +
+    `⏸ 流程挂起，等待用户在界面确认（等待不计入运行时间，不会超时）…\n` +
+    (rounds > 1 ? `   用户意见：机身再薄一点、配色改暖白 → 状态置为 revised，本阶段解锁重做。\n` : ``) +
+    `✅ 收到确认（第 ${rounds} 轮）→ 状态 confirmed，下游 20_structure 的门禁放行。`;
+}
+function hitlReset(){
+  hitlState = { status: "pending", rounds: 0 };
+  document.getElementById("hitlOut").textContent = "等待调用…";
+}
+
+/* ---------------- 预算模拟器 ---------------- */
+function budget(){
+  const v = i => +document.getElementById("r" + i).value;
+  document.getElementById("v1").textContent = v(1);
+  document.getElementById("v2").textContent = v(2);
+  document.getElementById("v3").textContent = v(3);
+  document.getElementById("v4").textContent = v(4);
+  const w = v(1) * 0.1 + v(2) * 0.1 + v(3) * 1 + v(4) * 1;
+  const naive = v(1) + v(2) + v(3) + v(4);
+  const cap = 150;
+  document.getElementById("gbar").style.width = Math.min(100, w / cap * 100) + "%";
+  document.getElementById("btext").textContent = `加权消耗 ${w.toFixed(1)} / ${cap}`;
+  document.getElementById("bnaive").textContent = naive;
+  const el = document.getElementById("bverdict");
+  el.textContent = w > cap ? "❌ 触发预算护栏" : (w > cap * 0.8 ? "⚠️ 接近上限" : "✅ 余量充足");
+  el.style.color = w > cap ? "var(--bad)" : (w > cap * 0.8 ? "var(--warn)" : "var(--ok)");
+}
+budget();
+
+/* ---------------- 清单 ---------------- */
+const CK = [
+  "把领域工序固化成阶段链，并给每阶段写死交付文件名",
+  "阶段之间传递可校验的数值，而不是「详见文档」",
+  "用任务 DNA 做路由：不同风险/时效对应不同预算与范式",
+  "主智能体只保留调度工具，专业工具只给子智能体",
+  "每个子智能体开工第一步是查门禁，不是开始干活",
+  "状态落盘（pending/working/done/confirmed/revised），昂贵工具开工前先问状态",
+  "人工闸门只加在「错了要整条链重做」的阶段，且等待不计入运行时限",
+  "预算按代价加权，停滞才是中止信号而不是时间",
+  "超时先续期、再续跑，续跑复用同一工作区与产物",
+  "外部失败分类处理：证书问题不重试、限流等窗口、连接抖动退避+降级",
+  "二进制产物只能由专用工具生成，后端层拦截文本写入",
+  "事件流可回放、产物可打包、设置落库前剥掉凭据"
+];
+const KEY = "asdk-course-checklist";
+let ckState = {};
+try { ckState = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch(e) { ckState = {}; }
+const cbox = document.getElementById("checklist");
+cbox.innerHTML = `<div style="font-size:13px;color:var(--dim);margin-bottom:6px">
+  已完成 <b id="ckn">0</b> / ${CK.length}</div>` + CK.map((t, i) => `
+  <label class="ck ${ckState[i] ? "done" : ""}">
+    <input type="checkbox" ${ckState[i] ? "checked" : ""} onchange="ckToggle(${i}, this.checked)">
+    <span>${t}</span>
+  </label>`).join("");
+function ckCount(){
+  const n = Object.values(ckState).filter(Boolean).length;
+  const el = document.getElementById("ckn");
+  if (el) el.textContent = n;
+}
+ckCount();
+function ckToggle(i, on){
+  ckState[i] = on;
+  localStorage.setItem(KEY, JSON.stringify(ckState));
+  document.querySelectorAll("#checklist .ck")[i].classList.toggle("done", on);
+  ckCount();
+}
+
+/* ---------------- 测验 ---------------- */
+const QS = [
+  { q:"阶段门禁判定「能不能开工」时，最可靠的依据是？",
+    o:["子智能体回交的结论","主智能体记录的任务状态","磁盘上是否存在对应产物文件","模型自述的完成度"], a:2,
+    e:"模型说做完了不算数 —— 文件在不在、图是不是坏的、人确认了没，才是判据。" },
+  { q:"为什么主智能体不拿全套工具？",
+    o:["省 token","它会自己下场干活，导致同一阶段被做两遍","子智能体性能更好","框架限制"], a:1,
+    e:"线上事故：主智能体和子智能体同时建模，预算烧光跑到 5/6 被迫中止。工具权限比提示词可靠。" },
+  { q:"一次运行跑了 900 秒，产物还在持续增加，应该？",
+    o:["立即中止，时间到了","续期，因为停滞才该中止","重启整个流程","降低模型温度"], a:1,
+    e:"时间本身不是失败信号，停滞才是。到点仍在进展应自动续期，真到硬上限再自动续跑。" },
+  { q:"只读工具（read_file / ls）在护栏里应该怎么算？",
+    o:["和写类工具同样计费","完全不计费","按 0.1 计，但「不算实质进展」","禁止使用"], a:2,
+    e:"只读幂等无副作用，阈值要高一个量级；但只读返回值不能算进展，否则反复回读会被判成在前进。" },
+  { q:"网关 /chat/completions 排队 15 秒才返回，正确处置是？",
+    o:["当作网络中断，立刻重试","拆开 connect/read 超时，退避重试，连续失败则换模型","关掉 SSL 校验","把超时调到 600 秒"], a:1,
+    e:"先分层探测再定性。断线和排队的处置完全相反：排队要退避 + 必要时换模型，SSL 问题才不该重试。" },
+  { q:"出图成功后，有人用 save_artifact 把图覆盖成了 11 字节的 placeholder，哪一层该拦住它？",
+    o:["提示词里再强调一遍","后端写入层拦截二进制路径 + 门禁检测坏图","让用户自己检查","评审阶段发现"], a:1,
+    e:"路径存在 ≠ 文件可用。判据必须看内容：门禁要能区分「有效图片」与「坏图」。" }
+];
+const qbox = document.getElementById("quiz");
+qbox.innerHTML = QS.map((q, qi) => `
+  <div class="q" id="q${qi}">
+    <div class="qt">${qi + 1}. ${q.q}</div>
+    ${q.o.map((o, oi) => `<div class="opt" onclick="answer(${qi},${oi},this)">${o}</div>`).join("")}
+    <div class="expl" id="e${qi}">${q.e}</div>
+  </div>`).join("");
+let ans = {};
+function answer(qi, oi, el){
+  if (ans[qi] !== undefined) return;
+  ans[qi] = oi;
+  const q = QS[qi];
+  document.querySelectorAll(`#q${qi} .opt`).forEach((o, i) => {
+    o.classList.add("locked");
+    if (i === q.a) o.classList.add("right");
+    else if (i === oi) o.classList.add("wrong");
+  });
+  document.getElementById("e" + qi).style.display = "block";
+  const right = Object.keys(ans).filter(k => ans[k] === QS[k].a).length;
+  document.getElementById("qscore").textContent = `已作答 ${Object.keys(ans).length} / ${QS.length}，正确 ${right}`;
+}
+function resetQuiz(){
+  ans = {};
+  document.querySelectorAll(".opt").forEach(o => o.classList.remove("locked", "right", "wrong"));
+  document.querySelectorAll(".expl").forEach(e => e.style.display = "none");
+  document.getElementById("qscore").textContent = `已作答 0 / ${QS.length}，正确 0`;
+}
+
+/* ---------------- 主题 ---------------- */
+document.documentElement.dataset.theme = "light";
+</script>
+</body>
+</html>
