@@ -2,6 +2,10 @@
 
 输入一句产品需求 → 智能体自主规划 → 并行产出**外观 / 结构 / 硬件 / 软件仿真**四套方案 → 交叉评审 → 产物落盘 + 会话入库。
 
+> **代码仓库**：https://github.com/lhbzx1984/smarthardware_agent（SSH `git@github.com:lhbzx1984/smarthardware_agent`，main 分支，2026-10-18 首次推送）
+> clone 加 `--recursive`（`vendor/text-to-cad` 建模规范是子模块）。
+> `.env` / `data/` / `workspace/` / `node_modules` / `.next` 已排除，不含密钥。
+
 ---
 
 ## 最新改动：交付完成弹窗（带产品渲染图）（2026-10-15）
