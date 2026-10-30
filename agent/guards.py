@@ -31,6 +31,18 @@ class RunBudget(RunAborted):
     label = "超出预算中止"
 
 
+class RunStepLimit(RunAborted):
+    """LangGraph 递归深度（recursion_limit）用尽。
+
+    这不是故障：产物往往已经攒到四五个阶段，只是主流程的往返额度花完了。
+    所以按「中止」处理（保留产物 + 可自动续跑），而不是抛异常把 run 打成 error
+    —— 实测那会让前五阶段落盘的文件全部白做。
+    """
+
+    status = "steps"
+    label = "达到步数上限"
+
+
 class RunGoal(RunAborted):
     """六阶段产物齐全、宽限期已过 —— 这不是失败，是按目标交付。"""
 

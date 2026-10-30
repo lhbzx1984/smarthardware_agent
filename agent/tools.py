@@ -1508,7 +1508,12 @@ def text_to_cad(script: str = "", base_name: str = "model", appearance_prompt: s
             "        Box(W-2*WALL, D-2*WALL, BASE_H-WALL, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)",
             "parts = {'下壳': shell.part}",
             "",
-            "写好后带 script 再次调用本工具；外形尺寸要与上面外观提示词一致。",
+            "",
+            "【下一步 · 硬要求】拿到上面这些约束后，不要在思考里做长篇几何推演"
+            "（球冠半径、孔位坐标、分模高度这类）：先把脚本整份写进 20_structure/model.py"
+            "（save_artifact 一次带全文，推导过程写进脚本注释），再用同一份脚本文本调用"
+            "text_to_cad(script=…)。实测事故：有结构工程师在一条消息里推演约 2.4 万字，"
+            "还没调用建模就被截断，子智能体返回空、本阶段零产物。落文件则不丢成果。",
         ]
         return _clip("\n".join(lines))
 
@@ -1971,9 +1976,22 @@ def stage_gate(stage: str = "") -> str:
             "缺哪份文档就补哪份（用 save_artifact 补写），不要整体推倒重来。"
         )
     elif done_files:
-        lines.append(
-            f"ℹ️ 本阶段目录下已有 {len(done_files)} 个文件，开工前先 ls 看清楚再决定补做什么。"
-        )
+        # 光说「已有 N 个文件」不够：实测结构阶段目录里躺着外观阶段预生成的 exploded-01.png，
+        # 子智能体既不知道它不算契约产物、也不知道还缺哪几份，于是误判进度。
+        need = [d["file"] for d in (g["deliverables"] or [])]
+        have = [f for f in need if f in done_files]
+        lack = [f for f in need if f not in done_files]
+        extra = [f for f in done_files if f not in need]
+        line = f"ℹ️ 本阶段目录下已有 {len(done_files)} 个文件：{'、'.join(done_files[:8])}"
+        if need:
+            line += f"\n   契约产物已齐：{'、'.join(have) or '（还没有）'}｜仍缺：{'、'.join(lack) or '（已齐全）'}"
+        if extra:
+            line += (
+                f"\n   非契约产物（多为上游阶段预生成或过程文件，**不代表本阶段已做完**）："
+                f"{'、'.join(extra[:6])}"
+            )
+        line += "。开工前先 ls 看清楚，缺哪份补哪份。"
+        lines.append(line)
     stagestate.mark_started(root, sid, "stage_gate")
     if g["upstream"]:
         lines.append(

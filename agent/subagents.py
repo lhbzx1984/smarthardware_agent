@@ -5,6 +5,7 @@ from deepagents.middleware.subagents import SubAgent
 
 import skillspec
 from tools import (
+    ALL_TOOLS,
     build_bom,
     build_structure,
     check_arduino,
@@ -47,6 +48,11 @@ TOOLS_FOR: dict[str, list] = {
     ],
     "firmware-engineer": _COMMON + [search_cirkit_docs, check_arduino],
     "integration-reviewer": [save_artifact, confirm_with_user],
+    # deepagents 会自动补一个同名兜底子智能体（graph.py：caller 没提供同名 spec 时才自动加），
+    # 它默认只拿文件工具 + 主智能体的工具（本项目主智能体只有 confirm_with_user）——
+    # 实测事故：主智能体在结构工程师返回空后改派 general-purpose，它报「没有 build_structure」，
+    # 结构阶段直接空交付。这里显式提供同名 spec 覆盖内置，让它也拿全套工具。
+    "general-purpose": ALL_TOOLS,
 }
 
 
@@ -87,6 +93,12 @@ COMMON_RULES = """
    次数后放行一次自我纠错。改完再走正常确认流程。
 0c. **同一份文档不要反复 save_artifact**：内容几乎一致会被工具直接拒绝并提示跳过，
    那是系统在保护预算 —— 看到提示就沿用现有文件继续下一步。
+0d. **别在思考里做长篇数值推演**：几何/尺寸/引脚这类推导要控制在十几行以内，
+    推到一半就**先把中间结果写进文件**（model.py / 尺寸表 / 引脚表），再基于文件继续。
+    实测事故：结构工程师在一条消息里写了约 2.4 万字的球冠半径推演，
+    还没来得及调 build_structure 就被截断，子智能体返回空、零产物，
+    主智能体以为它失败于是改派别的角色，结构阶段彻底空转。
+    长推演放进文件既省钱又不会因为截断丢掉全部成果。
 1. 【语言硬约束】全部用简体中文输出——**包括深度思考文本（thinking/思维链）**、
    工具参数里的文案、以及回交给主智能体的结论。专业术语保留英文原词（如 DFM、CMF、BOM、I2C）。
    严禁漂移到其它语种：实测出现过波斯语/阿拉伯语的思考与汇报（"طراحی ظاهر"、"کاربر ظاهر را..."），
@@ -223,6 +235,13 @@ confirm_with_user(stage="20_structure", summary=…, files=…)。
 再调用 text_to_cad（不传 script）：它会把外观阶段存档的出图提示词（10_appearance/prompts.json）
 和 appearance.md 摘要交回给你。外形尺寸、比例、分模位置一律以它为准，
 不要自己另编一套尺寸 —— 那正是「外观图与结构图对不上」的根因。
+
+【建模两步走 · 硬要求：脚本必须先落文件】
+1) 拿到约束后**立刻把脚本写进 20_structure/model.py**（save_artifact，一次带全文）。
+   尺寸推导、球冠半径、孔位坐标这些**写在脚本注释里**，不要在思考里推演。
+2) 再用同一份脚本文本调用 text_to_cad(script=…)。
+实测事故：有结构工程师在一条消息里做了约 2.4 万字的几何推演，还没调用建模就被截断，
+返回空、零产物。落文件这条路径截断也不丢东西，下一轮读回来就能接着干。
 
 【第一步：按 text-to-cad（cadgen）规范建出真实 3D 模型】
 拿到约束后，调用 text_to_cad 并带上 script（build123d 脚本），导出 STEP + STL，
@@ -487,4 +506,25 @@ REVIEWER = SubAgent(
     tools=TOOLS_FOR["integration-reviewer"],
 )
 
-ALL_SUBAGENTS = [REQUIREMENTS, INDUSTRIAL, MECHANICAL, HARDWARE, FIRMWARE, REVIEWER]
+# 兜底补位角色。名字必须与 deepagents 内置的 general-purpose 完全一致才会覆盖它
+# （内置那个只有文件工具，会报「没有 build_structure / generate_product_image」）。
+GENERAL = SubAgent(
+    name="general-purpose",
+    description="兜底补位：仅在某个专业子智能体反复失败时救火，用它完成那一步。专业活优先派对应角色（外观=industrial-designer、结构=mechanical-engineer、硬件=hardware-engineer、固件=firmware-engineer）。",
+    system_prompt=f"""你是兜底补位工程师：某个专业子智能体失败或返回空时，由你把那一步做完。
+
+{COMMON_RULES}
+
+{tools_note("general-purpose")}
+
+- 你手上**有全套专用工具**（出图 / 建模 / PCB / 固件自检都在）。
+  别再声称「当前环境没有 generate_product_image / build_structure」——
+  实测事故：有子智能体这么一断言就一次都不调用，整个阶段空交付。清单在上方，以它为准。
+- 派单里会写明你要补的是哪个阶段、要补出哪些文件。照做即可，
+  不要重新规划整个项目，也不要越界去做别的阶段。
+- 补位完成后，向主智能体回交：补了哪些文件、关键数值（尺寸/引脚/成本）、
+  以及原角色失败的原因（如果你看出来了），不超过 400 字。""",
+    tools=TOOLS_FOR["general-purpose"],
+)
+
+ALL_SUBAGENTS = [REQUIREMENTS, INDUSTRIAL, MECHANICAL, HARDWARE, FIRMWARE, REVIEWER, GENERAL]

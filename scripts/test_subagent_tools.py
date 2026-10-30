@@ -98,6 +98,33 @@ check("主提示词写明出图/建模尤其不能并行", "出图/建模阶段�
 check("主提示词要求子智能体报『工具不可用』时补派一次", "补派" in mp and "本次未生成" in mp)
 check("主提示词要求派单描述用中文", "中文" in mp and "description" in mp)
 
+print("\n【8】兜底角色 general-purpose 覆盖 deepagents 内置的同名子智能体")
+# 事故：结构工程师返回空后，主智能体改派 general-purpose；deepagents 自动补的那个
+# 只带文件工具 + 主智能体的工具（本项目主智能体只有 confirm_with_user），
+# 于是它回一句「没有 build_structure」就交差，结构阶段空转。
+check("general-purpose 在子智能体列表里（同名才会覆盖内置的）", "general-purpose" in AGENTS)
+gp = names_of("general-purpose")
+check("general-purpose 持有全套 16 个工具", len(gp) == 16, f"{len(gp)} 个")
+for t in ("build_structure", "text_to_cad", "generate_product_image", "emit_pcb"):
+    check(f"general-purpose 有 {t}", t in gp)
+gp_sp = AGENTS["general-purpose"]["system_prompt"]
+check("general-purpose 提示词声明它有全套专用工具", "全套专用工具" in gp_sp)
+check("general-purpose 提示词点名别再说没工具", "没有 generate_product_image" in gp_sp)
+
+print("\n【9】结构阶段：禁止长篇推演，脚本必须先落文件")
+check("通用准则有「别在思考里做长篇数值推演」", "长篇数值推演" in subagents.COMMON_RULES)
+mech = AGENTS["mechanical-engineer"]["system_prompt"]
+check("结构工程师提示词要求先把脚本写进 model.py", "20_structure/model.py" in mech)
+check("结构工程师提示词点名截断事故", "2.4 万字" in mech or "2.4万" in mech or "截断" in mech)
+cad_src = (ROOT / "agent" / "tools.py").read_text(encoding="utf-8")
+check("text_to_cad 返回里带「先落 model.py」的硬要求", "20_structure/model.py" in cad_src)
+
+print("\n【10】主智能体：空回交/未落盘也算失败，且补派只能补同一个角色")
+check("主提示词把「回交是空的」列为失败情形", "回交是空的" in mp)
+check("主提示词要求补派同一个角色、不要换人", "补派只能补同一个角色" in mp)
+check("主提示词点名 general-purpose 那次事故", "general-purpose" in mp)
+check("主提示词禁止调度者自己写下阶段产物", "调度者不是执行者" in mp or "不是执行者" in mp)
+
 print("\n" + "=" * 60)
 print(f"通过 {passed} 项，失败 {failed} 项")
 sys.exit(1 if failed else 0)

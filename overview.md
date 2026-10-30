@@ -2,6 +2,94 @@
 
 输入一句产品需求 → 智能体自主规划 → 并行产出**外观 / 结构 / 硬件 / 软件仿真**四套方案 → 交叉评审 → 产物落盘 + 会话入库。
 
+---
+
+## 最新改动：修「跑满 120 步整轮崩溃」（2026-10-30 · 第十七轮）
+
+报错：`GraphRecursionError: Recursion limit of 120 reached`，整轮被打成 error，
+前面几个阶段**已经落盘的产物全部作废**。
+
+### 根因一：子图与父图共享 step 计数，120 步根本不够
+
+LangGraph 里子智能体的每一次「模型 → 工具 → 模型」都算在**主图的账上**。
+六阶段串行链不是「6 次派单」那么便宜 —— 一个子智能体内部就能跑几十步。
+标准档的 120 步必然在某个阶段耗尽。
+
+修法（`agent/paradigms.py`）：按档位重给预算 ——
+**lean 120 / standard 600 / review 800 / explore 1000**，并可用
+`AGENT_RECURSION_{LEAN,STANDARD,REVIEW,EXPLORE}` 覆盖。
+真正的无效循环由 server 层的**工具预算**兜底拦，步数不再是第一道闸。
+
+### 根因二：撞上限被当成故障，产物跟着陪葬
+
+`GraphRecursionError` 一路冒泡到 server 的兜底 except → `status=error`。
+可实际上这往往只是「这一轮的往返额度花完了」，产物已经攒到四五个阶段。
+
+修法：新增 `guards.RunStepLimit`（`RunAborted` 子类，`status="steps"`）。
+`main_agent.run_agent` 捕获 `GraphRecursionError` 后先收口工具卡片、推一句人话提示，
+再转成中止信号 —— 走的是和「超时中止」同一条路径：**产物保留 + 自动续跑**。
+`_maybe_auto_resume` 的触发名单从只有 `timeout` 扩到 `timeout` + `steps`。
+
+### 附带：软阈值预警 + 补派次数上限
+
+- 用掉 80% 步数时推一次预警（「先保证当前阶段产物落盘，别在同一阶段反复补派」），
+  不再等到撞墙才知道。
+- 主提示词新增硬约束：**同一阶段最多补派 2 次**，第 3 次就在文档里标注缺项并进入下一阶段。
+  上一轮那次卡在结构阶段反复补派，正是把步数烧光的直接原因。
+- 前端历史列表新增 `steps` 状态样式（达到步数上限，中性色，不与「失败」混为一谈）。
+
+### 回归
+
+新增 `scripts/test_step_limit.py`（**18 项**：档位预算、环境变量覆盖、中止语义、
+假流耗尽 → 转成 `RunStepLimit`、软阈值只预警一次、续跑名单）。
+`test_paradigms` 45 项（顺带修了一条被 `.env` 的 `AGENT_STANDARD_SECONDS=2400` 打破的
+断言 —— 断言的是档位设计，比对前先卸掉 env 覆盖）、`test_subagent_tools` 65、
+`test_goal_stop` 22、`test_timeout_extend` 20、`test_rate_limit` 18、`test_delete_run` 17、
+`test_loop_guard` 24、`test_stage_once` 全绿；前端 `tsc --noEmit` 通过。
+
+---
+
+## 修「结构阶段空交付」（2026-10-30 · 第十六轮）
+
+真实运行「桌面式温湿度监测小夜灯」`2344fca905b9`：外观阶段很干净（render-01/02 串行同源，
+爆炸图也出了），**结构阶段零产物** —— 子智能体返回空三次，最后主智能体自己写文档兜底交差。
+
+### 根因一：主智能体改派给了没有工具的兜底角色（直接原因）
+
+`mechanical-engineer` 返回空之后，主智能体换人派了 `general-purpose`。
+这个同名子智能体是 **deepagents 自动补的**（`graph.py`：caller 没提供同名 spec 时才自动加），
+它的工具 = 文件中间件那套 + 主智能体的工具，而本项目主智能体只有 `confirm_with_user`。
+所以它诚实地回了一句「我没有 build_structure」，结构阶段就这么空了。
+`mechanical-engineer` 本身是**有** `build_structure` / `text_to_cad` / `generate_product_image` 的。
+
+修法：`agent/subagents.py` 显式提供同名 `general-purpose` spec 覆盖内置的（现在是 7 个角色，
+它拿全套 16 个工具），并在主提示词里写死**补派只能补同一个角色**。
+
+### 根因二：2.4 万字的几何推演被截断（为什么原角色返回空）
+
+结构工程师在一条消息里做球冠半径、孔位坐标的长推演（thinking 约 2.4 万字），
+还没来得及调 `text_to_cad` 就被截断 → 返回空、零产物 → 主智能体以为它失败。
+
+修法：三处同时压 —— `COMMON_RULES` 加「别在思考里做长篇数值推演」、
+`mechanical-engineer` 提示词要求**先把脚本写进 `20_structure/model.py` 再调 `text_to_cad(script=…)`**、
+`text_to_cad` 第一步的返回里也带上这条硬要求。落文件后即使截断也不丢成果。
+
+### 附带：门禁把「已有文件」说清楚
+
+结构阶段目录里躺着外观阶段预生成的 `exploded-01.png`，门禁只说「已有 1 个文件」，
+子智能体不知道它不算契约产物。`stage_gate` 现在分档列出：
+**契约产物已齐 / 仍缺 / 非契约产物（不代表本阶段做完）**。
+
+### 回归
+
+`scripts/test_subagent_tools.py` 47 → **65 项**（新增【8】兜底角色覆盖内置、【9】长推演约束、
+【10】空回交也算失败 + 补派不换人）；其余 11 个脚本全绿。
+
+**待生效**：worker 未重启（夜灯那次运行还在跑硬件/固件阶段，重启会打断它）。
+改动已落盘，下次跑 `restart-worker.ps1` 后自动生效。
+
+---
+
 > **代码仓库**：https://github.com/lhbzx1984/smarthardware_agent（SSH `git@github.com:lhbzx1984/smarthardware_agent`，main 分支，2026-10-18 首次推送）
 > clone 加 `--recursive`（`vendor/text-to-cad` 建模规范是子模块）。
 > `.env` / `data/` / `workspace/` / `node_modules` / `.next` 已排除，不含密钥。

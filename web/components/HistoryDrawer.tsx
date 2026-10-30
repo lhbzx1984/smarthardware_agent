@@ -27,6 +27,8 @@ const STATUS_STYLE: Record<string, { label: string; bg: string; fg: string }> = 
   cancelled: { label: "已停止", bg: "var(--bg-sunken)", fg: "var(--text-dim)" },
   timeout: { label: "超时中止", bg: "var(--warn-soft)", fg: "var(--warn)" },
   budget: { label: "超出预算中止", bg: "var(--warn-soft)", fg: "var(--warn)" },
+  // 一轮能跑的 super-step 数花完了（子智能体往返也算在主流程账上）—— 产物还在，不是故障
+  steps: { label: "达到步数上限", bg: "var(--warn-soft)", fg: "var(--warn)" },
 };
 
 function fmtTime(ts: number): string {

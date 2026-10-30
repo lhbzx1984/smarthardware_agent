@@ -1615,18 +1615,25 @@ def _resume_text(
     return (base_requirement or "").strip() + "\n\n" + "\n".join(lines)
 
 
-def _maybe_auto_resume(run: "Run") -> None:
-    """超时中止但还有剩余阶段 → 自动开一轮续跑，复用同一工作区。
+# 这三种中止都是「这一轮的额度用完了」，而不是任务本身做不下去 ——
+# 产物既然还在，续跑就比让用户从头再来划算。
+_RESUMABLE_STATUS = ("timeout", "steps")
+_RESUME_LABEL = {"timeout": "超时中止", "steps": "达到步数上限"}
 
-    为什么值得自动做：900 秒的档位是给「一轮」定的，而六阶段串行链本身就要十几分钟，
-    超时中止时产物往往已经攒到 4/6。让用户手动点「继续」既容易忘，也容易被误认为失败。
-    自动续跑把「时间到」变成「分段跑完」，同时保留硬性上限 —— 连续 AUTO_RESUME_MAX
+
+def _maybe_auto_resume(run: "Run") -> None:
+    """本轮额度用尽（超时 / 步数上限）但还有剩余阶段 → 自动开一轮续跑，复用同一工作区。
+
+    为什么值得自动做：900 秒的档位和 recursion_limit 都是给「一轮」定的，而六阶段串行链
+    本身就要十几分钟、几百个 super-step（子智能体的往返也算在主图账上），
+    撞上限时产物往往已经攒到 4/6。让用户手动点「继续」既容易忘，也容易被误认为失败。
+    自动续跑把「额度到」变成「分段跑完」，同时保留硬性上限 —— 连续 AUTO_RESUME_MAX
     轮都没做完就真的停手并如实报告，不会无限烧下去。
     """
     import pipeline
     import stages as st
 
-    if run.auto_resumed or run.db_status != "timeout" or run.cancel_requested:
+    if run.auto_resumed or run.db_status not in _RESUMABLE_STATUS or run.cancel_requested:
         return
     if run.auto_resume_count >= config.AUTO_RESUME_MAX:
         return
@@ -1660,7 +1667,8 @@ def _maybe_auto_resume(run: "Run") -> None:
             {
                 "type": "warn",
                 "message": (
-                    f"超时中止，但已完成 {done}/{prog.get('total', 6)} 个阶段 → "
+                    f"{_RESUME_LABEL.get(run.db_status, '本轮中止')}，但已完成 "
+                    f"{done}/{prog.get('total', 6)} 个阶段 → "
                     f"已自动续跑（第 {nxt.auto_resume_count} 轮，新会话 {nxt.id}），"
                     f"从「{st.stage_label(from_stage)}」继续。"
                 ),

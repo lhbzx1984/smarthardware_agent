@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import importlib
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +26,22 @@ store.DB_PATH = _TMP / "paradigm-selftest.db"
 
 import paradigms  # noqa: E402
 import toolspec  # noqa: E402
+
+# 断言的是**档位设计**，不是本机配置：.env 常把某一档的时限调大（跑长流程时会这么做，
+# 例如 AGENT_STANDARD_SECONDS=2400），那时「档位越重时限越宽」的不变量会被 env 打破 ——
+# 那是调参不是缺陷。所以比对前先卸掉这些覆盖，拿默认档位来判。
+for _k in (
+    "AGENT_LEAN_SECONDS",
+    "AGENT_STANDARD_SECONDS",
+    "AGENT_REVIEW_SECONDS",
+    "AGENT_EXPLORE_SECONDS",
+    "AGENT_LEAN_BUDGET",
+    "AGENT_STANDARD_BUDGET",
+    "AGENT_REVIEW_BUDGET",
+    "AGENT_EXPLORE_BUDGET",
+):
+    os.environ.pop(_k, None)
+paradigms = importlib.reload(paradigms)
 
 _OK = 0
 _FAIL = 0

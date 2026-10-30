@@ -22,6 +22,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class Paradigm:
     """一档执行策略。"""
@@ -36,7 +43,12 @@ class Paradigm:
     reflect: bool = False    # 是否启用 Reflexion（评审后返工 + 沉淀规则）
     branches: int = 1        # ToT 分支数，1 = 不分支
     fallback: str = ""       # 降级目标 key
-    recursion_limit: int = 120  # LangGraph 递归深度：档位越重留得越宽
+    # LangGraph 递归深度（= 单个 super-step 计一次）。**子图与父图共享这个计数**：
+    # 子智能体内部的每一次「模型 → 工具 → 模型」都算在主图的账上，所以六阶段串行链
+    # 绝不是「6 次派单」那么便宜。实测一次标准档跑满旧的 120 步整轮中止 ——
+    # 前五阶段的产物随之作废（GraphRecursionError 直接把 run 打成 error）。
+    # 现在按「每阶段约 60~80 步」给预算，真正的循环由 server 层的工具预算兜底拦。
+    recursion_limit: int = 600
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -63,7 +75,7 @@ LEAN = Paradigm(
     tool_budget=int(os.getenv("AGENT_LEAN_BUDGET", "30")),
     max_seconds=float(os.getenv("AGENT_LEAN_SECONDS", "240")),
     fallback="",
-    recursion_limit=40,
+    recursion_limit=_env_int("AGENT_RECURSION_LEAN", 120),
 )
 
 STANDARD = Paradigm(
@@ -82,6 +94,7 @@ STANDARD = Paradigm(
     tool_budget=int(os.getenv("AGENT_STANDARD_BUDGET", "150")),
     max_seconds=float(os.getenv("AGENT_STANDARD_SECONDS", "900")),
     fallback="lean",
+    recursion_limit=_env_int("AGENT_RECURSION_STANDARD", 600),
 )
 
 REVIEW = Paradigm(
@@ -94,7 +107,7 @@ REVIEW = Paradigm(
     max_seconds=float(os.getenv("AGENT_REVIEW_SECONDS", "1200")),
     reflect=True,
     fallback="standard",
-    recursion_limit=160,
+    recursion_limit=_env_int("AGENT_RECURSION_REVIEW", 800),
 )
 
 EXPLORE = Paradigm(
@@ -108,7 +121,7 @@ EXPLORE = Paradigm(
     reflect=True,
     branches=3,
     fallback="review",
-    recursion_limit=200,
+    recursion_limit=_env_int("AGENT_RECURSION_EXPLORE", 1000),
 )
 
 REGISTRY: dict[str, Paradigm] = {p.key: p for p in (LEAN, STANDARD, REVIEW, EXPLORE)}

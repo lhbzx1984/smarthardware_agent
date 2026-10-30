@@ -11,6 +11,7 @@ from deepagents.backends import FilesystemBackend
 from deepagents.backends.protocol import EditResult, ReadResult, WriteResult
 from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langgraph.errors import GraphRecursionError
 
 import config
 import guards
@@ -188,13 +189,32 @@ MAIN_PROMPT = """你是「智能产品设计智能体」的总指挥，把一句
    - 派出去之后**只等这一件事**：在子智能体回交并用 ls 核对产物落盘之前，
      不要派下一个阶段、不要碰下游目录、也不要自己动笔写下游文档（你是调度者，不是执行者）。
    - 一条消息里只允许有一个 task 调用（write_todos 可以和它一起发，那不算派单）。
-   - 子智能体回交里写「本次未生成 / 工具不可用 / 环境没有某工具」时，**先补派同一个
-     子智能体一次**，并在任务描述里点名它该调用的工具（例如「你手上有 generate_product_image，
-     图片由 Agnes 出图服务生成，与文本模型无关，直接调用它」）。
+   - 子智能体出现下面任一情形，都算**这一步没完成**，必须**补派同一个子智能体一次**
+     （任务描述里点名它该调用的工具）：
+       ① 回交里写「本次未生成 / 工具不可用 / 环境没有某工具」；
+       ② **回交是空的 / 只说了一句「门禁通过」就没下文**（实测：结构工程师在思考里做了
+          2.4 万字几何推演后被截断，返回空、零产物）；
+       ③ 用 ls 核对时它承诺的文件根本没落盘。
+     补派描述要点名工具，例如「你手上有 generate_product_image，
+     图片由 Agnes 出图服务生成，与文本模型无关，直接调用它」；
+     建模类则要它**先把脚本写进 20_structure/model.py 再调 text_to_cad(script=…)**，别让它现场长推演。
      实测事故：子智能体在思考里误判自己没有出图工具，于是一张图都没出就交差；
      主智能体照单全收直接请用户确认，用户看到的就是「外观设计阶段完成，但没有渲染图」。
      补派一次仍失败，才允许在文档里标注「AI 图不可用」并走三视图/工程视图兜底 ——
      **但绝不允许跳过补派就直接确认交付**。
+   - **补派只能补同一个角色，不要换人**：实测事故 —— 结构工程师返回空后，主智能体改派
+     general-purpose，而它拿不到本项目的建模/出图工具（当时只带文件工具），
+     于是回一句「没有 build_structure」就交差，结构阶段彻底空转，比原角色失败更糟
+     （原角色至少真的持有工具）。现在 general-purpose 也带全套工具可作最后兜底，
+     但它没有角色专属的过程约束，**优先级永远低于原角色**。
+   - 【补派次数上限：同一阶段最多补派 2 次】第 3 次仍没有产物落盘就**不要再派**：
+     在这一阶段的文档里写明「本次未生成 XXX（原因）」，然后进入下一阶段，
+     最终汇总里如实列出缺项。这不是为了省事 —— 实测一次运行卡在结构阶段反复补派
+     （每次补派都是一轮 40~80 秒的 LLM 往返，而子智能体内部的往返也算在主流程账上），
+     最后撞到 LangGraph 步数上限整轮中止，前面五个阶段已落盘的产物全部作废。
+   - 你是调度者不是执行者：即使补派也失败，也不要自己动笔写下游产物
+     （appearance.md / structure.md / model.py 这类）—— 那是子智能体的活。
+     唯一允许的例外是把建模脚本这类「参数」递给子智能体去执行。
    3a. industrial-designer：确认 10_appearance/ 下已有 render-01.png。
        **若工作区里已存在上一轮的外观图，先 ls 确认，直接复用，不要重出图**。
        **外观图出完必须停下等人**：调用 confirm_with_user(stage="10_appearance")，
@@ -638,101 +658,144 @@ def run_agent(
             }
         )
 
+    step_limit = paradigm.recursion_limit if paradigm else 600
+    # 步数用尽前的软预警：给一次「该收尾了」的提示，比撞墙后才知道强。
+    # 计数取 updates 事件条数（主图与子图各自每个 super-step 一条），够近似。
+    steps = 0
+    step_warned = False
+
+    def _consume(stream: Iterator[Any]) -> None:
+        nonlocal final, steps, step_warned
+        for ns, mode, chunk in stream:
+            agent_name = _label(ns)
+            flush_pending()
+            try:
+                if mode == "messages":
+                    msg, _meta = chunk
+                    if isinstance(msg, ToolMessage):
+                        cid = str(getattr(msg, "tool_call_id", "") or "")
+                        close_call(
+                            cid or f"anon-{len(calls)}",
+                            _text_of(msg.content),
+                            agent_name,
+                            getattr(msg, "name", "") or "",
+                        )
+                        continue
+                    if isinstance(msg, AIMessageChunk):
+                        for tc in getattr(msg, "tool_call_chunks", None) or []:
+                            cid = str(tc.get("id") or "")
+                            if not cid:
+                                continue
+                            rec = ensure_call(cid, tc.get("name") or "", agent_name)
+                            # args 增量拼接（OpenAI 兼容网关逐块下发 JSON 片段）
+                            piece = tc.get("args") or ""
+                            if piece:
+                                rec["args"] = (rec["args"] + piece) if not _is_prefix_overlap(rec["args"], piece) else piece
+                            start_call(cid, tc.get("name") or "", agent_name)
+                        for call in getattr(msg, "tool_calls", None) or []:
+                            cid = str(call.get("id") or "")
+                            if not cid:
+                                continue
+                            rec = ensure_call(cid, call.get("name") or "", agent_name)
+                            args = call.get("args") or {}
+                            s = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
+                            # 只在「手上这份不完整、新这份完整」或「新这份更长」时覆盖：
+                            # 网关先发占位 {}、后发真参数的顺序不能被先到的空壳锁死。
+                            if _args_ready(s) and (
+                                not _args_ready(rec["args"]) or len(s) > len(rec["args"])
+                            ):
+                                rec["args"] = s
+                            start_call(cid, call.get("name") or "", agent_name)
+                        reason = _reasoning_of(msg)
+                        if reason:
+                            push({"type": "thinking", "agent": agent_name, "text": reason})
+                        txt = _text_of(msg.content)
+                        if txt:
+                            final += txt
+                            push({"type": "token", "agent": agent_name, "text": txt})
+                elif mode == "updates":
+                    steps += 1
+                    if not step_warned and step_limit and steps >= int(step_limit * 0.8):
+                        step_warned = True
+                        push(
+                            {
+                                "type": "warn",
+                                "message": (
+                                    f"已用 {steps}/{step_limit} 步，接近本轮步数上限："
+                                    "请先保证当前阶段产物落盘，不要在同一阶段反复补派 —— "
+                                    "撞到上限会按中止处理，未落盘的东西就没了。"
+                                ),
+                            }
+                        )
+                    if isinstance(chunk, dict):
+                        for _node, update in chunk.items():
+                            if isinstance(update, dict):
+                                if "todos" in update:
+                                    _emit_todos(push, update["todos"])
+                                files = update.get("files")
+                                if isinstance(files, dict):
+                                    for p in files:
+                                        push({"type": "artifact", "path": str(p), "size": 0, "preview": ""})
+                                # 参数回填的第二条路：messages 流里网关给的是空壳 tool_calls，
+                                # 但节点 update 里的 AIMessage 常常带着完整参数，且它到达得
+                                # 比工具执行完更早 —— 用它补齐，tool_start 才有真实参数可用。
+                                for m in update.get("messages") or []:
+                                    for call in getattr(m, "tool_calls", None) or []:
+                                        cid = str(call.get("id") or "")
+                                        rec = calls.get(cid)
+                                        if rec is None:
+                                            continue
+                                        args = call.get("args") or {}
+                                        s = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
+                                        if _args_ready(s) and (
+                                            not _args_ready(rec["args"]) or len(s) > len(rec["args"])
+                                        ):
+                                            rec["args"] = s
+                                        if not rec.get("started") and _args_ready(rec["args"]):
+                                            _fire_start(cid)
+            except guards.RunAborted:
+                # 护栏的中止信号（取消 / 超时 / 超预算 / 目标达成）必须穿透出去。
+                # 这条 except 本来是给「单条事件解析失败」兜底的，写在整个循环体外面会
+                # 把 push 抛出的 RunAborted 一并吞掉 —— 结果就是前端点了停止，后台继续跑。
+                raise
+            except Exception as e:  # noqa: BLE001  单条事件解析失败不能中断整条流
+                push({"type": "warn", "message": f"事件解析跳过：{type(e).__name__}: {e}"})
+
     stream = agent.stream(
         {"messages": [{"role": "user", "content": requirement}]},
         stream_mode=["messages", "updates"],
         subgraphs=True,
-        # 递归深度跟着档位走：ReAct 档本就不该深挖，ToT 档要留出分支的余量
-        config={"recursion_limit": (paradigm.recursion_limit if paradigm else 120)},
+        # 递归深度跟着档位走：ReAct 档本就不该深挖，ToT 档要留出分支的余量。
+        # 注意子图与父图**共享**这个计数 —— 子智能体每轮往返都算在主图账上。
+        config={"recursion_limit": step_limit},
     )
-    for ns, mode, chunk in stream:
-        agent_name = _label(ns)
-        flush_pending()
-        try:
-            if mode == "messages":
-                msg, _meta = chunk
-                if isinstance(msg, ToolMessage):
-                    cid = str(getattr(msg, "tool_call_id", "") or "")
-                    close_call(
-                        cid or f"anon-{len(calls)}",
-                        _text_of(msg.content),
-                        agent_name,
-                        getattr(msg, "name", "") or "",
-                    )
-                    continue
-                if isinstance(msg, AIMessageChunk):
-                    for tc in getattr(msg, "tool_call_chunks", None) or []:
-                        cid = str(tc.get("id") or "")
-                        if not cid:
-                            continue
-                        rec = ensure_call(cid, tc.get("name") or "", agent_name)
-                        # args 增量拼接（OpenAI 兼容网关逐块下发 JSON 片段）
-                        piece = tc.get("args") or ""
-                        if piece:
-                            rec["args"] = (rec["args"] + piece) if not _is_prefix_overlap(rec["args"], piece) else piece
-                        start_call(cid, tc.get("name") or "", agent_name)
-                    for call in getattr(msg, "tool_calls", None) or []:
-                        cid = str(call.get("id") or "")
-                        if not cid:
-                            continue
-                        rec = ensure_call(cid, call.get("name") or "", agent_name)
-                        args = call.get("args") or {}
-                        s = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
-                        # 只在「手上这份不完整、新这份完整」或「新这份更长」时覆盖：
-                        # 网关先发占位 {}、后发真参数的顺序不能被先到的空壳锁死。
-                        if _args_ready(s) and (
-                            not _args_ready(rec["args"]) or len(s) > len(rec["args"])
-                        ):
-                            rec["args"] = s
-                        start_call(cid, call.get("name") or "", agent_name)
-                    reason = _reasoning_of(msg)
-                    if reason:
-                        push({"type": "thinking", "agent": agent_name, "text": reason})
-                    txt = _text_of(msg.content)
-                    if txt:
-                        final += txt
-                        push({"type": "token", "agent": agent_name, "text": txt})
-            elif mode == "updates":
-                if isinstance(chunk, dict):
-                    for _node, update in chunk.items():
-                        if isinstance(update, dict):
-                            if "todos" in update:
-                                _emit_todos(push, update["todos"])
-                            files = update.get("files")
-                            if isinstance(files, dict):
-                                for p in files:
-                                    push({"type": "artifact", "path": str(p), "size": 0, "preview": ""})
-                            # 参数回填的第二条路：messages 流里网关给的是空壳 tool_calls，
-                            # 但节点 update 里的 AIMessage 常常带着完整参数，且它到达得
-                            # 比工具执行完更早 —— 用它补齐，tool_start 才有真实参数可用。
-                            for m in update.get("messages") or []:
-                                for call in getattr(m, "tool_calls", None) or []:
-                                    cid = str(call.get("id") or "")
-                                    rec = calls.get(cid)
-                                    if rec is None:
-                                        continue
-                                    args = call.get("args") or {}
-                                    s = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
-                                    if _args_ready(s) and (
-                                        not _args_ready(rec["args"]) or len(s) > len(rec["args"])
-                                    ):
-                                        rec["args"] = s
-                                    if not rec.get("started") and _args_ready(rec["args"]):
-                                        _fire_start(cid)
-        except guards.RunAborted:
-            # 护栏的中止信号（取消 / 超时 / 超预算 / 目标达成）必须穿透出去。
-            # 这条 except 本来是给「单条事件解析失败」兜底的，写在整个循环体外面会
-            # 把 push 抛出的 RunAborted 一并吞掉 —— 结果就是前端点了停止，后台继续跑。
-            raise
-        except Exception as e:  # noqa: BLE001  单条事件解析失败不能中断整条流
-            push({"type": "warn", "message": f"事件解析跳过：{type(e).__name__}: {e}"})
 
-    # 收尾：参数始终没等到的调用也要把卡片发出去（否则前端少一张、事件对不上）
-    flush_pending(force=True)
-    # 已发起但没收到结果的调用（工具抛错 / 流中断 / 网关漏发 ToolMessage）
-    # 补一条收口事件，否则前端会永远挂着一张空卡片。
-    for cid, rec in calls.items():
-        if rec.get("started") and not rec.get("closed"):
-            close_call(cid, "", rec["agent"])
+    def _finish_calls() -> None:
+        """收口：把没等到参数的卡片发出去、给没收到结果的调用补一条结束事件。"""
+        flush_pending(force=True)
+        for cid, rec in calls.items():
+            if rec.get("started") and not rec.get("closed"):
+                close_call(cid, "", rec["agent"])
 
+    try:
+        _consume(stream)
+    except GraphRecursionError as e:
+        # 撞天花板 = 这一轮的往返额度花完了，**不等于失败**：
+        # 直接让它冒泡会把整个 run 打成 error，前几阶段落盘的产物全作废。
+        # 转成中止信号：产物保留、状态记为 steps、还有未完成阶段时自动续跑。
+        _finish_calls()
+        push(
+            {
+                "type": "warn",
+                "message": (
+                    f"主流程达到步数上限（{step_limit} 步）：本轮往返额度已用尽。"
+                    "已落盘的产物全部保留。"
+                ),
+            }
+        )
+        raise guards.RunStepLimit(
+            f"主流程达到步数上限 {step_limit} 步，已产出文件保留在工作区"
+        ) from e
+
+    _finish_calls()
     return final
