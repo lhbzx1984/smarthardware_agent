@@ -1,0 +1,25 @@
+# 构建上下文瘦身：这些目录动辄几百 MB～几 GB，不排除会让 docker build 卡在「Sending build context」
+.git
+.gitmodules
+.venv
+venv
+__pycache__/
+*.py[cod]
+*.log
+.lastrun
+
+node_modules/
+.next*/
+*.tsbuildinfo
+.chrome-profile/
+
+# 运行产物与本地状态（部署机上由 volume 承载）
+workspace/
+data/
+.workbuddy/
+.tmp/
+vendor/
+scripts/
+docs/
+board/
+overview.md

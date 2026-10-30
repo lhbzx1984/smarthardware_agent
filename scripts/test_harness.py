@@ -198,7 +198,10 @@ def test_termination() -> None:
     r3 = server.Run("测试预算", {})
     hit = False
     try:
-        for i in range(config.TOOL_BUDGET + 5):
+        # 用 Run 自己的预算，不是 config.TOOL_BUDGET：真实阈值是
+        # min(档位预算, HARD_TOOL_BUDGET)，按需求文本路由出的档位可能比全局值大，
+        # 照全局值循环根本够不着阈值（这个测试就这么假失败过一次）。
+        for i in range(int(r3.tool_budget) + 5):
             r3.push({"type": "tool_start", "cid": f"c{i}", "name": "build_structure", "args": f"script{i}"})
     except guards.RunBudget:
         hit = True
@@ -207,7 +210,7 @@ def test_termination() -> None:
     r4 = server.Run("测试只读预算", {})
     hit_ro = False
     try:
-        for i in range(config.TOOL_BUDGET + 5):
+        for i in range(int(r4.tool_budget) + 5):
             r4.push({"type": "tool_start", "cid": f"c{i}", "name": "ls", "args": f"/{i}"})
     except guards.RunAborted:
         hit_ro = True

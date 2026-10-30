@@ -187,6 +187,9 @@ KNOWLEDGE_DIR = Path(os.getenv("AGENT_KNOWLEDGE", str(ROOT / "knowledge" / "raw"
 SKILLS_DIR = ROOT / "agent" / "skills"
 
 PORT = int(os.getenv("AGENT_PORT", "8001"))
+# 监听地址。默认只绑回环（本机开发，前端与 worker 同机，端口不对外）；
+# 部署到容器/服务器时必须设 AGENT_HOST=0.0.0.0，否则 nginx 与跨容器访问全部连不上。
+HOST = os.getenv("AGENT_HOST", "127.0.0.1").strip() or "127.0.0.1"
 MOCK = os.getenv("AGENT_MOCK", "0") == "1"
 
 MAX_TOOL_RESULT_CHARS = 4000

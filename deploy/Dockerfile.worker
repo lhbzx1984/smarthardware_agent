@@ -1,0 +1,41 @@
+# Agent Worker：FastAPI + SSE，端口 8001
+# 构建（在仓库根目录）：docker build -f deploy/Dockerfile.worker -t pda-worker .
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8 \
+    TZ=Asia/Shanghai \
+    # 容器内监听 0.0.0.0，否则 nginx / 跨容器访问全部连不上
+    AGENT_HOST=0.0.0.0 \
+    AGENT_PORT=8001
+
+WORKDIR /app
+
+# curl 仅用于 HEALTHCHECK；tzdata 保证日志时间按东八区显示
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/requirements.txt /tmp/requirements.txt
+# 阿里云 PyPI 镜像（境外源在 ECS 上经常 30s+ 超时）
+RUN pip install --no-cache-dir --disable-pip-version-check \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --extra-index-url https://pypi.org/simple \
+    -r /tmp/requirements.txt
+
+# 只 COPY 运行期真正用到的目录（vendor 子模块是建模规范参考，代码不引用）
+COPY agent/ ./agent/
+COPY knowledge/ ./knowledge/
+
+# store.py 不会自建目录：data 放 sqlite、workspace 放每次运行的产物，缺了启动即崩
+RUN mkdir -p /app/data /app/workspace
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8001/health || exit 1
+
+# 必须 cd 到 agent/ 再启动：server.py 用 `import config` 依赖 sys.path[0]
+CMD ["sh", "-c", "cd /app/agent && exec python server.py"]

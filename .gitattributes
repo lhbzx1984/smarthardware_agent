@@ -1,0 +1,12 @@
+# 部署脚本必须 LF：Windows 上检出成 CRLF 会让 bash 报 `\r: command not found`
+*.sh text eol=lf
+
+# 服务单元 / nginx 配置 / compose 同样交给 Linux 解析，锁 LF
+*.service text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf
+
+# 图片与已归档的二进制不要做任何换行转换
+*.png binary
+*.jpg binary
+*.svg text eol=lf

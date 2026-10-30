@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 import csv
+import importlib
 import json
 import re
+import sys
+import threading
 import time
 from contextvars import ContextVar
 from pathlib import Path
@@ -25,6 +28,58 @@ _sink: ContextVar[Callable[[dict], None] | None] = ContextVar("sink", default=No
 _settings: ContextVar[dict[str, Any]] = ContextVar("settings", default={})
 # 运行对象（server.Run）：人工确认闸门要挂起整条流、暂停运行时钟，光有目录不够
 _run_obj: ContextVar[Any] = ContextVar("run_obj", default=None)
+
+
+# ---- 延迟导入统一入口 -------------------------------------------------------
+# 工具是在线程池里并发跑的，而 CPython 的 import 锁在「线程 A 导包根、线程 B 直接导子模块」
+# 并发时会互相等成环：_DeadlockError: deadlock detected by _ModuleLock('eda.xxx')。
+# 所以：① 所有延迟导入走 _mod()，首次导入串行化；② 启动时单线程预热，运行期不再首次导入。
+_IMPORT_LOCK = threading.Lock()
+_EDA_PKG: str | None = None
+
+
+def _mod(name: str, attr: str | None = None):
+    """导入模块（或取它的一个属性）。已在 sys.modules 就直接返回，不进锁。"""
+    mod = sys.modules.get(name)
+    if mod is None:
+        with _IMPORT_LOCK:
+            mod = importlib.import_module(name)
+    return mod if attr is None else getattr(mod, attr)
+
+
+def _eda_pkg() -> str:
+    """eda 包的名字随启动方式变（worker 里是顶层 eda，脚本里是 agent.eda）。
+
+    只解析一次并固定下来 —— 同一个文件被当成两个模块各导一遍，是后面一切混乱的源头。
+    """
+    global _EDA_PKG
+    if _EDA_PKG is None:
+        try:
+            _EDA_PKG = _mod("eda").__name__
+        except ImportError:
+            _EDA_PKG = _mod("agent.eda").__name__
+    return _EDA_PKG
+
+
+def _eda(name: str, attr: str | None = None):
+    """按固定包名取 eda 的子模块：_eda("kicad", "write") → kicad.write。"""
+    return _mod(f"{_eda_pkg()}.{name}", attr)
+
+
+def _warm_imports() -> None:
+    """启动时单线程把工具会用到的 eda 子模块全导入好。
+
+    失败不阻塞启动 —— 运行期还有 _mod() 的锁兜底，不会退化成以前的死锁。
+    """
+    try:
+        pkg = _eda_pkg()
+        for m in ("board", "netlist", "kicad", "pcb", "easyeda", "preview", "gerber"):
+            _mod(f"{pkg}.{m}")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_warm_imports()
 
 
 def bind_context(
@@ -304,6 +359,18 @@ def _auto_filename(kind: str) -> str:
             if m:
                 nums.append(int(m.group(1)))
     return f"{base_dir}/{prefix}-{max(nums) + 1 if nums else 1:02d}.png"
+
+
+def _in_stage_dir(name: str, kind: str) -> str:
+    """模型指定 filename 时常只给裸文件名（render-02.png），直接落盘会掉到工作区根，
+    前端分组就归到「其它文件」，下游也引用不到。
+
+    没带目录就按用途归位：渲染图进 10_appearance，爆炸图进 20_structure。
+    """
+    n = (name or "").replace("\\", "/").strip().lstrip("/")
+    if "/" in n:
+        return n
+    return ("20_structure/" if kind == "exploded" else "10_appearance/") + n
 
 
 def _dedupe_rel(rel: str) -> str:
@@ -590,6 +657,20 @@ def check_circuit(netlist_json: str) -> str:
     if supplies and not any("GND" in p.upper() for p in adj):
         warns.append("提示：网表中未出现 GND 连接，回路不完整。")
 
+    # 8. 元件到底有没有接进电路：漏点号的端点（C2正极）和完全没出现过的元件，
+    #    都会让 PCB 上出现一只没有飞线的孤立器件
+    touched = {str(q).split(".", 1)[0] for c in conns
+               for q in (c.get("from"), c.get("to")) if q and "." in str(q)}
+    lonely = [cid for cid in comps if cid not in touched]
+    if lonely:
+        warns.append("警告：" + "、".join(lonely) + " 没有任何连线（PCB 上不会有飞线），"
+                                    "补 connections 或从网表里删掉")
+    bad_ep = sorted({str(q) for c in conns for q in (c.get("from"), c.get("to"))
+                     if q and "." not in str(q) and re.search(r"(正极|负极|阳极|阴极)$", str(q))})
+    if bad_ep:
+        warns.append("端点少了点号：" + "、".join(bad_ep[:6]) + " —— 要写成 位号.引脚名，"
+                                   "否则这几只元件等于没接线")
+
     verdict = "通过" if not issues else "未通过"
     lines = [f"电路规则校验：{verdict}（{len(comps)} 个元件 / {len(conns)} 条连线）"]
     if issues:
@@ -780,6 +861,350 @@ def render_schematic(netlist_json: str = "", filename: str = "30_hardware/schema
 
 
 @tool
+def emit_kicad_project(netlist_json: str = "", name: str = "schematic") -> str:
+    """把电路网表导出成 KiCad 工程（.kicad_pro + .kicad_sch）—— 真 EDA 文件，不是示意图。
+
+    与 render_schematic 的区别：那个出的是 SVG 图片（给人看），这个出的是 KiCad 原生工程
+    （给 EDA 用：能改、能导网表、能进 PCB、能出 BOM）。两者读同一份网表，内容永远一致。
+
+    netlist_json：留空则自动读取 30_hardware/netlist.json（推荐）。格式与 check_circuit 一致：
+      {"components":[{"id":"U1","type":"module","value":"ESP32-C3-MINI-1"}],
+       "connections":[{"from":"U1.GPIO8","to":"R1.1"}],
+       "supplies":[{"net":"3V3","voltage":3.3}]}
+    name：工程文件名（不含扩展名），默认 "schematic"。
+
+    产物：30_hardware/<name>.kicad_pro、<name>.kicad_sch、<name>.kicad_sym、sym-lib-table。
+    符号既内嵌在原理图里、又单独出一份符号库并登记到库表 —— 换台机器双击即开，
+    跑 ERC 也不会提示「符号库未配置」。**整个 30_hardware 目录一起拷走才是完整工程。**
+    封装名按器件库自动补（模块/IC/连接器用库里的真实引脚名），没匹配到的留空不臆造。
+    """
+    emit("tool_progress", name="emit_kicad_project", detail=name)
+
+    kicad_write = _eda("kicad", "write")
+    annotate = _eda("netlist", "annotate")
+    normalize = _eda("netlist", "normalize")
+
+    data: dict[str, Any] | None = None
+    if netlist_json.strip():
+        try:
+            data = json.loads(netlist_json)
+        except json.JSONDecodeError as e:
+            return f"JSON 解析失败：{e}。请传入合法 JSON 字符串，或留空让它自动读 netlist.json。"
+    else:
+        src = _run_path() / "30_hardware" / "netlist.json"
+        if not src.exists():
+            return "找不到 30_hardware/netlist.json。请先用 save_artifact 写出网表，或直接传 netlist_json。"
+        try:
+            data = json.loads(src.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            return f"{src} 不是合法 JSON（{e}）。请先修正网表文件。"
+
+    stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(name or "schematic").strip()) or "schematic"
+    ok, err = _safe_target(f"30_hardware/{stem}.kicad_sch")
+    if ok is None:
+        return err
+    out_dir = ok.parent
+
+    net = annotate(normalize(data, title=stem))
+    if not (net.get("components") or []):
+        return "网表里没有元件，无法生成工程。请先补全 components。"
+
+    res = kicad_write(net, out_dir, stem)
+    if not res.get("ok"):
+        return f"KiCad 工程生成失败：{res.get('error')}。请检查网表结构后重试。"
+
+    lines = [f"KiCad 工程已生成（{stem}）："]
+    for f in res.get("files") or []:
+        rel = f"30_hardware/{f['name']}"
+        emit("artifact", path=rel, size=f["size"], preview="")
+        lines.append(f"  - {rel}（{f['size']/1024:.1f} KB）")
+
+    s = net.get("stats") or {}
+    matched = s.get("parts_matched", 0)
+    warns = net.get("warnings") or []
+    lines.append(
+        f"{s.get('components', 0)} 个器件 / {s.get('connections', 0)} 条连线 / {s.get('nets', 0)} 个网络；"
+        f"器件库补齐封装 {matched} 个。"
+    )
+    lines.append("符号内嵌在 .kicad_sch 里，同时带符号库与库表，不依赖官方库；"
+                 "电源与地已画成标准电源符号，悬空脚标了 no_connect。")
+    if warns:
+        lines.append(f"规范化提示 {len(warns)} 条，例如：" + "；".join(warns[:3]))
+    iso = net.get("unconnected") or []
+    if iso:
+        lines.append(
+            "⚠ 这些器件在 netlist.json 里没有任何连线，PCB 上不会有飞线："
+            + "、".join(iso[:12])
+            + "。这是网表漏写，不是导出问题 —— 回硬件阶段把它们的 connections 补上。"
+        )
+    lines.append("在 hardware.md 里注明「附 KiCad 工程，可用 KiCad 9+ 打开」即可。")
+
+    result = "\n".join(lines)
+    emit("tool_result", name="emit_kicad_project", detail=result[:400])
+    return _clip(result)
+
+
+@tool
+def emit_pcb(board_json: str = "", name: str = "board") -> str:
+    """把电路网表 + 结构板级约束导出成 KiCad PCB（.kicad_pcb）—— 真板子文件。
+
+    读两份数据：
+      - 30_hardware/netlist.json（器件与网络，来自 check_circuit / save_artifact）
+      - 20_structure/board.json（板框硬边界：内腔尺寸、安装孔、禁布区、限高、接口靠边）
+    board_json：留空则自动读取 20_structure/board.json（推荐）；也可直接传 JSON 字符串。
+
+    board_json 结构（结构工程师负责产出，形状支持异形）：
+      {"board": {"shape": "rect|rounded_rect|circle|polygon", "width_mm": 52, "height_mm": 34,
+                 "corner_radius_mm": 3, "thickness_mm": 1.6,
+                 "polygon_mm": [[x,y], ...]},            # shape=polygon 时给顶点
+       "mounting_holes": [{"x_mm": -22, "y_mm": -12, "diameter_mm": 3.2, "plated": false}],
+       "keepouts": [{"name": "电池仓", "x_mm": 12, "y_mm": 8, "w_mm": 16, "h_mm": 12}],
+       "edge_constraints": [{"ref": "J1", "edge": "left"}]}
+    坐标以**板中心为原点**，单位 mm。
+
+    产出：30_hardware/<name>.kicad_pcb、<name>.pretty/（自带封装库）、fp-lib-table。
+    **整个 30_hardware 目录一起拷走才是完整工程**，否则会提示封装库缺失。
+
+    能力边界（别向用户承诺超出这个范围的东西）：
+      ✅ 板框（圆角/圆形/异形多边形）、器件布局、安装孔、GND 铺铜
+      ❌ **不自动布线**：信号线要在 KiCad 里用自带布线器或 Freertos/Freerouting 走线
+      ❌ 焊盘是参数化近似，布线前请把封装替换成官方库对应封装（descr 里写了原目标封装名）
+      ❌ 不出 Gerber：那要在 EDA 里导出
+    """
+    emit("tool_progress", name="emit_pcb", detail=name)
+
+    board_load = _eda("board", "load")
+    board_normalize = _eda("board", "normalize")
+    annotate = _eda("netlist", "annotate")
+    normalize = _eda("netlist", "normalize")
+    pcb_write = _eda("pcb", "write")
+
+    root = _run_path()
+
+    src = root / "30_hardware" / "netlist.json"
+    if not src.exists():
+        return ("找不到 30_hardware/netlist.json。请先用 save_artifact 写出网表"
+                "（或先调 check_circuit / emit_kicad_project）再出 PCB。")
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return f"{src} 不是合法 JSON（{e}）。请先修正网表文件。"
+
+    if board_json.strip():
+        try:
+            board = board_normalize(json.loads(board_json))
+        except json.JSONDecodeError as e:
+            return f"board_json 解析失败：{e}。留空可自动读 20_structure/board.json。"
+    else:
+        board = board_load(root / "20_structure" / "board.json")
+
+    stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(name or "board").strip()) or "board"
+    ok, err = _safe_target(f"30_hardware/{stem}.kicad_pcb")
+    if ok is None:
+        return err
+    out_dir = ok.parent
+
+    net = annotate(normalize(data, title=stem))
+    if not (net.get("components") or []):
+        return "网表里没有元件，无法生成 PCB。请先补全 components。"
+
+    res = pcb_write(net, board, out_dir, stem)
+    if not res.get("ok"):
+        return f"PCB 生成失败：{res.get('error')}。请检查网表与 board.json 后重试。"
+
+    main = [f for f in res.get("files") or [] if f["name"].endswith(".kicad_pcb")]
+    mods = [f for f in res.get("files") or [] if f["name"].endswith(".kicad_mod")]
+    for f in main + [x for x in (res.get("files") or []) if x["name"] == "fp-lib-table"]:
+        emit("artifact", path=f"30_hardware/{f['name']}", size=f["size"], preview="")
+
+    bs = board.get("stats") or {}
+    s = net.get("stats") or {}
+    lines = [f"KiCad PCB 已生成（{stem}）："]
+    for f in main:
+        lines.append(f"  - 30_hardware/{f['name']}（{f['size']/1024:.1f} KB）")
+    lines.append(f"  - 30_hardware/{stem}.pretty/（{len(mods)} 个封装）、fp-lib-table（工程自带库）")
+    lines.append(
+        f"板框 {bs.get('shape')} {bs.get('bbox_mm')}mm，面积 {bs.get('area_mm2')} mm²，"
+        f"安装孔 {bs.get('mounting_holes')} 个、禁布区 {bs.get('keepouts')} 个；"
+        f"{s.get('components', 0)} 个器件已布局，GND 铺在 B.Cu。"
+    )
+    if board.get("warnings"):
+        lines.append("板级约束提示：" + "；".join(board["warnings"][:3]))
+    iso = net.get("unconnected") or []
+    if iso:
+        lines.append(
+            "⚠ 这些器件在 netlist.json 里没有任何连线，PCB 上不会有飞线："
+            + "、".join(iso[:12])
+            + "。这是网表漏写，不是导出问题 —— 回硬件阶段把它们的 connections 补上。"
+        )
+    lines.append(
+        "**未布线**：信号线请在 KiCad 里用自带布线器（或导出 DSN 交给 Freerouting）走线；"
+        "焊盘是参数化近似，布线前把封装换成官方库对应封装（封装描述里写了原目标封装名）；"
+        "Gerber 在 KiCad 里导出。board.json 的数值如果和结构内腔对不上，先回去改结构，别在 PCB 里硬凑。"
+    )
+
+    result = "\n".join(lines)
+    emit("tool_result", name="emit_pcb", detail=result[:400])
+    return _clip(result)
+
+
+@tool
+def emit_easyeda(name: str = "board") -> str:
+    """把同一份网表再投影成嘉立创 EDA 专业版（EasyEDA Pro）原生工程 `.epro`。
+
+    给习惯了嘉立创的用户双击即开的工程，省掉「KiCad 导入」这一步。
+    要在 emit_pcb 之后调用（读的是同一份 netlist.json 与 board.json）。
+
+    name：工程名，默认 board。产出 30_hardware/<name>.epro。
+
+    能力边界（如实写进交付说明，别让用户以为这是完整工程）：
+      ✅ PCB 段：板框（含圆角/异形）、器件布局、安装孔、网络表
+      ✅ 原理图页：符号 + 引脚引出线 + 网络标签（不画跨图走线，靠 NET 并网）
+      ✅ 同时产出 30_hardware/<name>.schematic.svg —— 原理图预览，浏览器直接打开就能看排版，
+         交付说明里要告诉用户可以先看这张图
+      ✅ **符号与封装优先取自立创官方元件库**（按型号搜 LCSC 编号，拉真符号真封装）；
+         搜不到才退回本地参数化图形，此时封装是近似值、布线前要替换
+      ❌ 不布线、不出 Gerber（Gerber 用 KiCad 那条链路）
+      ✅ 格式对齐客户端导出的真实工程（分文件 zip + JSON Lines），
+         并用 KiCad 的 EasyEDA Pro 导入器回读校验过器件数/焊盘数/板框尺寸
+    """
+    emit("tool_progress", name="emit_easyeda", detail=name)
+
+    board_load = _eda("board", "load")
+    easyeda_write = _eda("easyeda", "write")
+    annotate = _eda("netlist", "annotate")
+    normalize = _eda("netlist", "normalize")
+
+    root = _run_path()
+    src = root / "30_hardware" / "netlist.json"
+    if not src.exists():
+        return "找不到 30_hardware/netlist.json。请先完成硬件设计（或先调 emit_pcb）再导出。"
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return f"{src} 不是合法 JSON（{e}）。请先修正网表。"
+
+    board = board_load(root / "20_structure" / "board.json")
+    stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(name or "board").strip()) or "board"
+    ok, err = _safe_target(f"30_hardware/{stem}.epro")
+    if ok is None:
+        return err
+
+    net = annotate(normalize(data, title=stem))
+    if not (net.get("components") or []):
+        return "网表里没有元件，无法生成工程。请先补全 components。"
+
+    res = easyeda_write(net, board, ok.parent, stem)
+    if not res.get("ok"):
+        return f"EasyEDA 工程生成失败：{res.get('error')}。请检查网表与 board.json 后重试。"
+
+    for f in res.get("files") or []:
+        emit("artifact", path=f"30_hardware/{f['name']}", size=f["size"], preview="")
+
+    # 原理图预览（纯 Python 画的 SVG）：用户不必开客户端就能看排版对不对
+    sch_note = ""
+    try:
+        _sch_svg = _eda("preview", "write_svg")
+        svg = _sch_svg(ok, ok.parent / f"{stem}.schematic.svg", stem)
+        emit("artifact", path=f"30_hardware/{svg.name}", size=svg.stat().st_size, preview="")
+        sch_note = f"  - 30_hardware/{svg.name}（原理图预览，浏览器可直接打开）\n"
+    except Exception as exc:                                     # noqa: BLE001
+        sch_note = f"  （原理图预览生成失败：{type(exc).__name__}: {exc}，不影响 .epro）\n"
+
+    iso = net.get("unconnected") or []
+    lines = [
+        f"EasyEDA Pro 工程已生成（{stem}）：",
+        f"  - 30_hardware/{stem}.epro（{res['size']/1024:.1f} KB，{res.get('note')}）",
+        sch_note.rstrip("\n"),
+        "内容与 KiCad 版同源：同一份网表、同一套焊盘几何、同一份布局坐标，两块板不会对不上。",
+        "打开方式：嘉立创 EDA 专业版 → 文件 → 打开 → 选这个 .epro。",
+        "**如实说明**：① PCB 与原理图都有，但原理图是「每个引脚一小截引出线 + "
+        "同名 NET 标签」的画法（靠网名并网，与真机的网络标签机制一致），不是手工排的走线图；"
+        "② PCB 未布线；③ 格式对齐客户端导出的真实工程，PCB 段已用 KiCad 的 EasyEDA Pro "
+        "导入器回读校验（器件数 / 焊盘数 / 板框尺寸都对得上），原理图段暂只能做结构自检；"
+        "本机没有 EasyEDA 客户端，打开效果仍需你实测，如显示异常请反馈。",
+    ]
+    if iso:
+        lines.append(
+            "⚠ 这些器件在 netlist.json 里没有任何连线，画布上不会有飞线："
+            + "、".join(iso[:12])
+            + "。这是网表漏写，不是导出问题 —— 回硬件阶段把它们的 connections 补上。"
+        )
+    result = "\n".join(lines)
+    emit("tool_result", name="emit_easyeda", detail=result[:400])
+    return _clip(result)
+
+
+@tool
+def export_gerbers(pcb: str = "board") -> str:
+    """把 KiCad PCB 导出成板厂打样要的那包文件（Gerber + 钻孔 + 坐标），并打包成 zip。
+
+    pcb：30_hardware 下的 PCB 名（不含扩展名），默认 board，即 emit_pcb 的产物。
+
+    产出：30_hardware/gerber/（各层 .gbr + .drl + positions.csv）与 30_hardware/gerber.zip。
+    走本机 kicad-cli 无头导出；**没装 KiCad 会明确告诉你**，不会假装成功。
+
+    能力边界（别向用户承诺超出范围的东西）：
+      ✅ Gerber RS-274X、Excellon 钻孔、贴片坐标文件
+      ❌ 不校验板厂工艺能力（最小线宽/线距/孔径要自己去板厂页面对）
+      ❌ 板子还没布线 —— 导出来只有焊盘、板框和铺铜，信号线要在 KiCad 里布完再导出
+    """
+    emit("tool_progress", name="export_gerbers", detail=pcb)
+
+    gerber_mod = _mod(f"{_eda_pkg()}.gerber")
+
+    root = _run_path()
+    stem = re.sub(r"[^A-Za-z0-9_-]", "_", str(pcb or "board").strip()) or "board"
+    src = root / "30_hardware" / f"{stem}.kicad_pcb"
+    if not src.exists():
+        return (f"找不到 30_hardware/{stem}.kicad_pcb。请先调 emit_pcb 生成 PCB，"
+                "再导 Gerber（没板子就没东西可导）。")
+
+    out_dir = root / "30_hardware" / "gerber"
+    res = gerber_mod.export(src, out_dir)
+    files = [str(f) for f in (res.get("files") or [])]
+    if not files:
+        return (f"Gerber 导出失败：{res.get('error') or '未知原因'}。\n"
+                f"手工导出方式：{res.get('hint', '')}")
+
+    zip_path = root / "30_hardware" / "gerber.zip"
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    readme = "\n".join([
+        f"{stem} 制造文件包（{stamp}）",
+        "",
+        "目录：gerber/（散层），本 zip 是同一批文件的打包。",
+        "打样必需：顶层/底层线路、阻焊、丝印、板框（Edge_Cuts）、钻孔 .drl。",
+        "贴片坐标：positions.csv。BOM：见同目录 bom.csv。",
+        "",
+        "注意：",
+        "1. 本板由智能体生成，信号线未布线，需先在 KiCad 里完成布线再打样。",
+        "2. 封装是参数化近似，布线前请替换为官方库对应封装。",
+        "3. 提交板厂前请自行核对最小线宽/线距/孔径等工艺能力。",
+    ])
+    packed = gerber_mod.pack(files, zip_path, extra={"README.txt": readme})
+    if not packed.get("ok"):
+        return f"文件已导出到 30_hardware/gerber/，但打包失败：{packed.get('error')}"
+
+    for rel in ("30_hardware/gerber.zip",):
+        p = root / rel
+        if p.exists():
+            emit("artifact", path=rel, size=p.stat().st_size, preview="")
+
+    need = [Path(f).name for f in gerber_mod.essential(files)]
+    lines = [f"制造文件已导出（{stem}）：",
+             f"  - 30_hardware/gerber.zip（{packed.get('size', 0) / 1024:.1f} KB，{packed.get('count')} 个文件）",
+             f"  - 30_hardware/gerber/（散层，可直接拖进板厂下单页）",
+             f"必需层 {len(need)} 个：" + "、".join(need[:8]) + ("…" if len(need) > 8 else "")]
+    if res.get("failed"):
+        lines.append("部分步骤没跑成功（文件可能不全）：" + "；".join(str(x)[:80] for x in res["failed"][:2]))
+    lines.append("**未布线**：信号线请在 KiCad 里布完再重新导出，否则板厂拿到的是没有走线的板。")
+
+    result = "\n".join(lines)
+    emit("tool_result", name="export_gerbers", detail=result[:400])
+    return _clip(result)
+
+
+@tool
 def generate_product_image(
     prompt: str,
     kind: str = "render",
@@ -815,16 +1240,20 @@ def generate_product_image(
     """
     import imagegen
 
-    blocked = _stage_lock("generate_product_image", "10_appearance")
-    if blocked:
-        return blocked
     kind = (kind or "render").strip().lower()
     if kind not in ("render", "exploded"):
         kind = "render"
     if not filename.strip():
         # 按用途归位：渲染图进外观阶段，爆炸图进结构阶段，避免和图文档引用对不上
         filename = _auto_filename(kind)
+    else:
+        filename = _in_stage_dir(filename, kind)
     rel = _dedupe_rel(_rel_of(filename))
+    # 先算出目标路径再过闸：护栏要按「这次会不会覆盖已落盘的东西」判断，
+    # 只看阶段状态会把「补齐第二张图」误判成「把第一张重做一遍」。
+    blocked = _stage_lock("generate_product_image", "10_appearance", files=[rel])
+    if blocked:
+        return blocked
     dest, err = _safe_target(rel)
     if dest is None:
         return err
@@ -882,7 +1311,11 @@ def generate_product_image(
         # 图已经拿到了，但要让人知道这一跳是放宽校验拿到的。
         emit("tool_note", name="image_tls", detail=f"图片获取方式：{tls_note}")
     emit("artifact", path=rel, size=res["bytes"], preview="")
-    _stage_done("10_appearance")
+    # 出**一张**图不等于本阶段做完：外观阶段要连出基线图/场景图/爆炸图，
+    # 以前这里直接 _stage_done，于是第二张图撞上「本阶段已落盘请确认」被拦（实测事故）。
+    # 现在只刷新台账：契约产物（appearance.md + orthographic.svg + render-01.png）
+    # 全齐了才置 done，没齐之前状态保持 working，后续图可以接着出。
+    _sync_stage(rel)
     # 提示词必须落盘：结构阶段要靠它做「外观-结构同源」，靠模型口头转述必漂移
     # 存档只记相对路径：绝对路径换台机器就失效，结构阶段还要拿它做一致性核对
     used_ref = ref_rel if (ref_path is not None and res.get("referenced")) else ""
@@ -1121,6 +1554,27 @@ def text_to_cad(script: str = "", base_name: str = "model", appearance_prompt: s
     total = [r["size_mm"] for r in res.get("parts", [])]
     overall = [round(max(t[i] for t in total), 1) for i in range(3)] if total else [0, 0, 0]
     _write_consistency(base_prompt, overall, res.get("parts", []), same_source=appearance_ready)
+
+    # 尺寸自检：几何畸形时**不置 done**。置了就把阶段锁住，模型发现尺寸错了也改不动
+    # （护栏会拦它重做），只能 confirm → 再被拦 → 白烧工具预算。见 _cad_sanity 的注释。
+    bad = _cad_sanity(res.get("parts", []), res.get("script") or script)
+    if bad:
+        lines = [
+            "⚠️ 脚本跑通了，但**几何明显畸形**，这份不能当成果交付：",
+        ]
+        lines += [f"  - {b}" for b in bad]
+        lines += [
+            "",
+            "最常见的原因：用 Sphere / Cylinder 这类**大半径辅助体**做布尔（微拱、圆角），",
+            "切开之后辅助体的残余留在零件里，包围盒就虚高一大截。",
+            "改法：辅助体的半径按「弦长公式」算，或直接用有界高度的凸台/放样代替球体；",
+            "也可以在脚本末尾把超出设计高度的残余再减一次。",
+            "",
+            "**本阶段没有被锁住**，你不用去请用户确认 —— 直接改脚本重新调用本工具即可。",
+            "（只有几何自检通过的建模才会把阶段置为 done 并触发人工闸门。）",
+        ]
+        return _clip("\n".join(lines))
+
     _stage_done("20_structure")
 
     lines = [
@@ -1137,6 +1591,43 @@ def text_to_cad(script: str = "", base_name: str = "model", appearance_prompt: s
         lines.append("已生成视图：" + "、".join(f"10_appearance/{m}" for m in made))
     lines.append("外观-结构对照已写入 20_structure/consistency.md，请把它核一遍再写 structure.md。")
     return _clip("\n".join(lines))
+
+
+def _cad_sanity(parts: list, script: str) -> list[str]:
+    """建模「成功」但几何明显畸形时，列出问题（空列表 = 通过）。
+
+    为什么要这一步（线上事故）：上盖用 `Sphere(半径 340)` 做微拱，布尔之后包围盒变成
+    **100×100×341mm**，工具照样报「建模成功」并把 20_structure 置为 done —— 阶段一锁，
+    模型发现尺寸不对也改不了（护栏拦它重做），于是 confirm → 再被拦 → confirm → 再被拦，
+    8 次调用全烧在这上面，最后阶段还停在错模型上。**脚本能跑通 ≠ 模型是对的。**
+
+    这里只判「不可能是这个产品」的硬伤，不做审美判断：
+      1. 体积 ≤ 0：不是实体，或者布尔把整个零件减没了；
+      2. 任一维 > 500mm：桌面设备不会有这么大的零件；
+      3. 最长边 > 脚本声明外形最长边的 2.5 倍：辅助体残留的典型症状。
+    """
+    import cad as cad_mod
+
+    if not parts:
+        return ["没有导出任何零件"]
+    dims = cad_mod.parse_dims(script or "")
+    ref = max(dims.values()) if dims else 0.0
+    bad: list[str] = []
+    for r in parts:
+        name = str(r.get("name") or "?")
+        sz = [float(x) for x in (r.get("size_mm") or [0, 0, 0])]
+        if float(r.get("volume_cm3") or 0) <= 0:
+            bad.append(f"{name} 体积 ≤ 0（不是实体，或布尔把整个零件减没了）")
+            continue
+        if max(sz) > 500:
+            bad.append(f"{name} 包围盒 {sz[0]:.0f}×{sz[1]:.0f}×{sz[2]:.0f}mm，"
+                       f"最长边超过 500mm —— 几何失控")
+            continue
+        if ref and max(sz) > ref * 2.5:
+            bad.append(f"{name} 包围盒 {sz[0]:.0f}×{sz[1]:.0f}×{sz[2]:.0f}mm，"
+                       f"最长边 {max(sz):.0f}mm 是脚本声明外形（{ref:.0f}mm）的 "
+                       f"{max(sz) / ref:.1f} 倍")
+    return bad
 
 
 def _cad_fail_text(res: dict, script: str, out_dir, base_name: str) -> tuple[str, list]:
@@ -1530,6 +2021,10 @@ ALL_TOOLS = [
     save_artifact,
     check_circuit,
     render_schematic,
+    emit_kicad_project,
+    emit_pcb,
+    emit_easyeda,
+    export_gerbers,
     build_bom,
     check_arduino,
     generate_product_image,

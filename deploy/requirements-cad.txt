@@ -1,0 +1,11 @@
+# 可选：本地 CAD 运行时。
+# 装了它，AGENT_CAD_RUNTIME=local 才能在服务器上直接建模；不装时走 E2B 云端沙箱（推荐）。
+#
+# ⚠ 两个前提：
+#   1. build123d 依赖 OCP（cadquery-ocp），约 700MB 且只有 x86_64 manylinux wheel
+#      → 阿里云 ECS 必须选 x86_64 实例（g7/c7/t7 等），ARM（倚天 710）装不上。
+#   2. 建模时峰值内存可观，8GB 以下实例并发跑两个建模任务就会 OOM
+#      → 2C4G 机器请坚决用 E2B 云端（本机实测 8GB 并发必崩，这是踩过的坑）。
+
+build123d==0.13.0
+ocpsvg>=0.7.0

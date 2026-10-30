@@ -223,6 +223,33 @@ python scripts/probe_agnes_parallel.py 4  # 并发 4 路，验证是否限流
 
 鉴权失败**不会被重试**（工具返回 `retryable=false` 并提示模型止损），避免像早期版本那样连烧 5 次调用。
 
+## 电路设计：原理图 + PCB（两条输出链路）
+
+硬件阶段出两套工程文件，**同源同一份网表**（`30_hardware/netlist.json`）与板框（`20_structure/board.json`）：
+
+| 链路 | 产物 | 用途 |
+|---|---|---|
+| KiCad（主） | `board.kicad_pcb` / `schematic.kicad_sch` / `*.kicad_sym` + Gerber | 本机 DRC、打样 Gerber |
+| 嘉立创（副） | `board.epro`（zip 容器）+ `board.schematic.svg` 预览 | 导入嘉立创 EDA 专业版下单 |
+
+**元件符号与封装来自立创官方库**（公开只读接口，无需鉴权）：按型号搜 LCSC 编号 →
+拉该器件的真符号 + 真封装 → 转成 Pro 图元。命中率看器件，实测一个 22 件的板子命中 16 件；
+搜不到或详情取不到的才退回本地参数化图形（形状按种类画，不是同一个方框刷全部）。
+
+```bash
+python scripts/test_lib.py                       # 48 项：库解析 / 单位换算 / 焊盘几何
+python scripts/check_real_board.py <run_dir>     # 真实工程验收，含 .epro 回读（【5】段）
+python scripts/render_sch_preview.py <in.epro> <out.svg>   # 单独渲染原理图预览
+```
+
+已知边界：
+
+- **不布线**：信号线交给 KiCad 布线器 / Freerouting，所以 DRC 里的 `unconnected_items` 是预期的
+  （验收脚本把它和 violations 分开统计）。
+- **KiCad 链路还没接元件库**：`board.kicad_pcb` 里的封装仍是参数化近似；
+  立创库数据只喂给了 `.epro` 那条链路。两边封装会不一致。
+- `.epro` 是 **v2.2 zip 容器**（不是 V3 单文件），KiCad 10 的 EASYEDAPRO 导入器只认 v2。
+
 ## 部署
 
 **Worker（长驻进程，推荐阿里云 ECS）**

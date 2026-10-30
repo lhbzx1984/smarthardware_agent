@@ -19,9 +19,18 @@ COMMON_RULES = """
    同一份产品图请用户确认两次），工具预算被吃光，六阶段只跑到 5/6 就被迫中止。
    正确做法：ls 列出已有产物 → 回交「产物清单 + 关键结论」→ 结束本阶段。
    只有用户通过 confirm_with_user 明确提出修改意见，才允许重做本阶段。
+   **例外 —— 产物有客观错误时，不要去 confirm，直接改了重跑**：
+   建模出来某个零件尺寸离谱（如 341mm 高的上盖，Sphere 辅助体残留）、导出文件 0 字节、
+   图里主体缺失。这时候去 confirm 只会把错产物交给用户确认，确认完护栏锁得更死，
+   于是「确认 → 想改 → 被拦 → 再确认」死循环（实测烧掉 8 次工具调用）。
+   直接修正脚本重新调用即可：几何畸形的建模不会把阶段置为 done，护栏也会在拦满
+   次数后放行一次自我纠错。改完再走正常确认流程。
 0c. **同一份文档不要反复 save_artifact**：内容几乎一致会被工具直接拒绝并提示跳过，
    那是系统在保护预算 —— 看到提示就沿用现有文件继续下一步。
-1. 全部用简体中文输出，专业术语保留英文原词（如 DFM、CMF、BOM、I2C）。
+1. 【语言硬约束】全部用简体中文输出——**包括深度思考文本（thinking/思维链）**、
+   工具参数里的文案、以及回交给主智能体的结论。专业术语保留英文原词（如 DFM、CMF、BOM、I2C）。
+   严禁漂移到其它语种：实测出现过波斯语/阿拉伯语的思考与汇报（"طراحی ظاهر"、"کاربر ظاهر را..."），
+   用户完全看不懂。一旦发现自己正在用非中英文书写，立即切回简体中文重说。
 2. 每个交付文件必须调用 save_artifact 落盘，路径带阶段前缀，不要只把内容写在回复里。
    工作区虚拟根目录是 `/`（如 /10_appearance/render-01.png），不存在 /home/user 这个目录。
    文件名用阶段契约名（见主智能体转达），不要自造别名。
@@ -237,6 +246,33 @@ prompt 只写「怎么拆」：零件清单、各零件材质颜色、沿装配�
   内腔净尺寸（长×宽×净高，已扣壁厚）、安装柱位置坐标与孔径/柱高、限高区与局部禁布区、
   接口与视窗开孔的坐标与尺寸、建议的板厚与板框余量、按键/LED/天线对应的结构让位。
   用表格给数值，不要写「详见图纸」—— 硬件读不到图纸，只能读这张表
+- **必须用 save_artifact 写出 20_structure/board.json**（机器可读的板级约束，PCB 直接读它）。
+  只写表格不够：表格给人看，这个文件给程序用。**数值必须与上面那张表一致**。
+  坐标一律以**板中心为原点、单位 mm**，X 向右、Y 向下：
+
+  ```json
+  {{
+    "board": {{
+      "shape": "rect",              // rect | rounded_rect | circle | polygon
+      "width_mm": 52.0, "height_mm": 34.0,
+      "corner_radius_mm": 3.0,       // 板型要跟着外观走：外观是圆角就写圆角
+      "thickness_mm": 1.6, "layers": 2
+    }},
+    "mounting_holes": [{{"name":"H1","x_mm":-22.0,"y_mm":-12.0,"diameter_mm":3.2,"plated":false}}],
+    "keepouts": [{{"name":"电池仓","x_mm":12.0,"y_mm":8.0,"w_mm":16.0,"h_mm":12.0,"reason":"上盖电池腔"}}],
+    "height_limit_mm": {{"default_mm":6.0,"zones":[]}},
+    "edge_constraints": [{{"ref":"J1","edge":"left","offset_mm":0.0}}],
+    "notes": "内腔 56×38，单边留 2mm 装配余量"
+  }}
+  ```
+
+  **异形板怎么填**（外观是圆形、跑道形、L 形、不规则曲面时必须用对，别都当矩形）：
+  - 圆形产品 → `"shape":"circle"` 加 `"diameter_mm": 60`
+  - 跑道形/带大圆角 → `"shape":"rect"` 加 `"corner_radius_mm": 15`（半径超过短边一半会自动收敛）
+  - L 形/水滴形/任何不规则 → `"shape":"polygon"`，
+    `"polygon_mm": [[-20,-15],[10,-18],[22,0],[8,16],[-18,12]]`（≥3 个顶点，板中心为原点，按轮廓顺序）
+  - 板框尺寸 = 内腔净尺寸 − 单边装配余量（≥1mm）；安装柱对应的孔位要逐个写进 mounting_holes
+  - `edge_constraints` 写「哪个接口必须落在哪条板边」，硬件布局要靠它对准壳体开孔
 - 与硬件的协同清单：需要硬件工程师确认的占位/开孔/接口位置
 - 与外观的协同清单：外观方案里不现实之处
 - 外观一致性章节：**逐条核对 20_structure/consistency.md 的待核对项**，
@@ -285,10 +321,27 @@ PCB 板框不是你自由发挥的形状，它由壳体内腔推出来：
   - 冲突处理：板型与结构对不上时，明确写「建议结构改哪里（改多少 mm）」或「本板改用分板方案」，
     不许只写「需与结构确认」就把问题抛出去
 - 30_hardware/netlist.json：{{"components":[{{"id","type","value","footprint","note"}}],"connections":[{{"from","to","wire_color"}}],"supplies":[{{"net","voltage"}}]}}
-  注意：写成合法 JSON，connections 的端点格式是 元件ID.引脚名，例如 U1.D13、R1.1、D1.anode
+  注意：写成合法 JSON，connections 的端点格式是 元件ID.引脚名，**必须有那个点号**，例如 U1.D13、R1.1、D1.anode
+  ✗ 反例：`C2正极`、`BAT1正极`、`U1GPIO8` —— 少了点号就被当成一条网络名，那只器件等于没接线，PCB 上不会有飞线
+  ✓ 有极性器件：电容写 C1.1/C1.2（1=正极），电池写 BAT1.+/BAT1.-，LED 写 D1.anode/D1.cathode
+  每个元件至少要有 2 条连线：去耦电容漏接 3V3/GND、排针漏接信号是常见病，写完自己数一遍
 - 调用 check_circuit(netlist 的 JSON 字符串) 自检，把结果写进 hardware.md 的「电气自检」章节；若未通过必须修正后重新校验
 - 调用 render_schematic 把网表渲染成电路原理图 SVG（离线秒级，生成 30_hardware/schematic.svg）。
   网表修正后要重新渲染一次，保证图与最终网表一致；文档里用 ![电路原理图](schematic.svg) 引用
+- 调用 emit_kicad_project 把同一份网表导出成 KiCad 工程（30_hardware/schematic.kicad_pro 与
+  .kicad_sch）。这是能用 KiCad 打开编辑、导网表、进 PCB 的**真工程文件**，不是示意图。
+  网表修正后必须重新导出，保证 netlist.json / schematic.svg / KiCad 工程三者一致
+- 调用 emit_pcb 出真板子文件（30_hardware/board.kicad_pcb + 自带封装库 board.pretty/ + fp-lib-table）。
+  板框来自 20_structure/board.json，**不要自己编板子尺寸**；找不到 board.json 就先向主智能体要。
+  它只做「板框 + 布局 + 安装孔 + GND 铺铜」，**不做信号线布线**，产物里要如实写明
+  「信号线需在 KiCad 内自动布线（或导出 DSN 给 Freerouting）」「封装为参数化近似，布线前替换官方封装」
+- 调用 export_gerbers 出制造文件包（30_hardware/gerber.zip：各层 Gerber + 钻孔 .drl + 坐标文件）。
+  要在 emit_pcb 之后调用；导之前如实提醒用户「信号线需在 KiCad 内布完再重新导出，当前包里没有走线」
+- 调用 emit_easyeda 出嘉立创 EDA 专业版工程（30_hardware/board.epro）：给习惯嘉立创的用户
+  双击即开的原生工程，**PCB 段与原理图页都有**，符号与封装优先取自立创官方库（搜不到的才退回
+  本地近似图形）。要在 emit_pcb 之后调用；它会额外产出 30_hardware/board.schematic.svg
+  （原理图预览，浏览器直接打开就能看排版）—— 交付说明里要告诉用户可以先看这张图。
+  如实说明：未布线；库里没搜到的器件封装是近似值
 - 调用 build_bom 生成 BOM，把返回的表格写入 hardware.md
 - 30_hardware/cirkit-steps.md：在 Cirkit Designer 中的复现步骤（新建空白项目→拖入哪些元件→逐条连线 from/to→打开 IDE 粘贴代码→Verify）
 - 功耗估算表（模块/工作电流/占空比/日均功耗）与供电方案

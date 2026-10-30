@@ -46,6 +46,11 @@ EXPENSIVE_TOOLS = {
 # 廉价工具即使重复也只是浪费预算，不值得为它们挡住模型
 _CHEAP = {"stage_gate", "confirm_with_user"}
 
+# 一个阶段本来就要出**多份**产物的工具：外观阶段要连出基线图 / 场景图 / 爆炸图，
+# 出完第一张就把阶段锁住的话，后面几张永远出不来（实测：render-02 被拦死）。
+# 建模 / 原理图 / BOM 一次就是一份产物，不在这条豁免里 —— 否则换个文件名就能绕过闸门。
+_MULTI_OUTPUT = {"generate_product_image", "render_product_views"}
+
 
 def path_of(root: Path, sid: str) -> Path:
     return Path(root) / sid / _FILE
@@ -65,6 +70,7 @@ def load(root: Path, sid: str) -> dict[str, Any]:
     d.setdefault("confirmed", False)
     d.setdefault("feedback", "")
     d.setdefault("rounds", 0)
+    d.setdefault("blocked", 0)      # 被护栏拦了几次（熔断用）
     return d
 
 
@@ -99,7 +105,9 @@ def mark_done(root: Path, sid: str) -> dict[str, Any]:
 
 
 def mark_confirmed(root: Path, sid: str, rounds: int = 1, feedback: str = "") -> dict[str, Any]:
-    return save(root, sid, status=CONFIRMED, confirmed=True, rounds=int(rounds), feedback=feedback or "")
+    # blocked 归零：新的一轮确认，熔断计数不该继承上一轮
+    return save(root, sid, status=CONFIRMED, confirmed=True, rounds=int(rounds),
+                feedback=feedback or "", blocked=0)
 
 
 def mark_revised(root: Path, sid: str, feedback: str = "", rounds: int = 1) -> dict[str, Any]:
@@ -127,9 +135,15 @@ def needs_work(root: Path, sid: str) -> tuple[bool, str]:
 def guard(root: Path, sid: str, tool: str, files: list[str] | None = None) -> str:
     """昂贵工具开工前的幂等闸。返回空串 = 放行，非空 = 拒绝理由（直接回给模型）。
 
-    两条放行例外：
-    1. 状态是 revised（用户要求改）—— 这时候重做是正确行为，必须放行。
-    2. 阶段从没做过 —— 第一次调用当然放行。
+    放行例外：
+    1. 状态是 pending / working / revised（用户要求改）—— 重做是正确行为。
+    2. **熔断**：同一状态连拦 N 次仍坚持要干 —— 说明模型确信产物有客观错误。
+       继续拦下去就是死循环（实测：confirm → 被拦 → confirm → 被拦，8 次调用白烧）。
+       所以拦满次数就放行一次，并把状态退回一档，让它做完还能正常收尾。
+
+    为什么要有熔断：护栏的目的是「别把已确认的东西重做一遍」，不是「把模型锁死」。
+    模型自己发现产物错了（比如建模出来 341mm 的上盖）时，必须给它一条修正的路，
+    否则它只有两条路：一直撞墙，或者带着错产物往下走。
     """
     if tool in _CHEAP:
         return ""
@@ -137,7 +151,31 @@ def guard(root: Path, sid: str, tool: str, files: list[str] | None = None) -> st
     st = str(d.get("status"))
     if st in (PENDING, WORKING, REVISED):
         return ""
+
+    # 补齐**新**产物不算重做：目标文件在磁盘上一个都不存在，这次不会覆盖任何已落盘的东西。
+    # 实测事故：外观阶段出完 render-01 就把阶段置成 done，结果第二张图 render-02
+    # 撞上「本阶段已落盘，请先请用户确认」被拦死 —— 一次出图把整个阶段锁住了。
+    # 出图侧已改为「契约产物齐了才置 done」，这里再兜一层：只要是新文件就放行。
+    if st == DONE and tool in _MULTI_OUTPUT and files:
+        try:
+            _root = Path(root)
+            if not any(f and (_root / f).is_file() for f in files):
+                return ""
+        except OSError:
+            pass
+
     shown = "、".join((files or [])[:6])
+    blocked = int(d.get("blocked") or 0)
+    # 已确认过的要更谨慎：多拦一次
+    limit = 2 if st == CONFIRMED else 1
+    if blocked >= limit:
+        # 放行一次自我纠错：状态退回一档，做完会重新走确认流程
+        save(root, sid, blocked=0, status=(DONE if st == CONFIRMED else WORKING))
+        return ""
+    save(root, sid, blocked=blocked + 1)
+    left = limit - blocked
+    again = f"\n（如果你确信这是客观错误必须改：再调用一次本工具就会被放行 —— 本闸最多再拦 {left} 次。）"
+
     if st == CONFIRMED:
         return (
             f"⛔ {sid} 本阶段产物**已经生成并经用户确认**，不要再调用 {tool} 重做一遍。"
@@ -145,10 +183,12 @@ def guard(root: Path, sid: str, tool: str, files: list[str] | None = None) -> st
             + "\n重复执行会覆盖已确认的产物、烧掉工具预算，并把同一份东西再请用户确认一次。"
             "\n正确做法：直接向主智能体回交本阶段结论，进入下一个阶段。"
             "\n只有用户通过 confirm_with_user 明确提出修改意见后，才可以重做本阶段。"
+            + again
         )
     # status == DONE：产物有了但还没确认。放行会覆盖，挡住并要求先去确认
     return (
         f"⛔ {sid} 本阶段产物已经落盘（{shown or '见工作区'}），但**还没经用户确认**。"
         f"\n请先调用 confirm_with_user(stage=\"{sid}\") 请用户确认，确认通过后再决定要不要重做。"
         "\n直接重做会让「用户看到的图」和「结构拿去建模的图」变成两代不同的产品。"
+        + again
     )

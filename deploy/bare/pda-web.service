@@ -1,0 +1,21 @@
+[Unit]
+Description=Product Design Agent Web (Next.js)
+After=network-online.target pda-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__PDA_USER__
+WorkingDirectory=__PDA_DIR__/web
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=AGENT_WORKER_URL=http://127.0.0.1:8001
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+StandardOutput=append:/var/log/pda-web.log
+StandardError=append:/var/log/pda-web.log
+
+[Install]
+WantedBy=multi-user.target

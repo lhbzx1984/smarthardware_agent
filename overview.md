@@ -6,7 +6,657 @@
 > clone 加 `--recursive`（`vendor/text-to-cad` 建模规范是子模块）。
 > `.env` / `data/` / `workspace/` / `node_modules` / `.next` 已排除，不含密钥。
 
+## 最新改动：修 EDA 工具并发导入死锁（2026-10-30 · 第十四轮）
+
+**现象**：一次运行里 EDA 工具报
+`_DeadlockError: deadlock detected by _ModuleLock('eda.board')`，整次运行报废。
+
+**根因**（已复现，8 线程约 10% 命中率）：工具函数里写的是「用到才 import」，而工具在线程池里并发跑。
+CPython 的 import 锁在**「线程 A 导包根 `eda`、线程 B 直接导子模块 `eda.board`」**并发时互相等成环 ——
+`_find_and_load` 是**先拿子模块锁、再去导父包**，于是 B 拿着 `eda.board` 等 `eda`，A 拿着 `eda` 等 `eda.board`，
+`_has_deadlocked()` 判定成环 → 抛 `_DeadlockError`。
+
+**修法**（`agent/tools.py`）：
+1. `_mod(name, attr)` —— 所有延迟导入统一入口，首次导入进全局 `_IMPORT_LOCK` 串行化；
+   已在 `sys.modules` 的走快路径，不进锁（热路径零开销）。
+2. `_eda_pkg()` —— eda 包名只解析一次并固定（worker 里是顶层 `eda`，脚本里是 `agent.eda`），
+   杜绝同一个文件被当成两个模块各导一遍。
+3. `_warm_imports()` —— `import tools` 时单线程把 7 个 eda 子模块全部预热（实测 96ms），
+   运行期根本不再有首次导入。
+
+**顺带修掉一个静默 bug**：`emit_easyeda` 里写的是 `from .eda.preview import write_svg`，
+但 worker 里 `tools` 是**顶层模块**（`__package__ == ''`，server 用 `from tools import ALL_TOOLS` 启动），
+相对导入必然 `ImportError` 并被 `except Exception` 吞掉 —— **原理图预览 SVG 从来没真正生成过**。
+改用 `_eda("preview", "write_svg")` 后冒烟可见 `board.schematic.svg` 正常产出。
+同类问题：`scripts/test_easyeda.py` 的 `from agent.eda.preview import ...`（路径只放了 `agent/`）也改回顶层 `eda`。
+
+**回归**：新增 `scripts/test_eda_import_race.py`（13 项：预热完整性 2 / 单份模块 1 / 访问器 7 /
+子进程 12 轮 ×12 线程并发导入无死锁 1 / 源码无裸 eda import 2）。
+EDA 链路 test_kicad 58 + test_pcb 62 + test_easyeda 95 + test_gerber 24 + test_lib 48 全绿，
+其余 10 个链路回归脚本全绿，三个 EDA 工具冒烟出全产物，worker 已重启。
+
 ---
+
+## 最新改动：修「第二张图被拦 / 渲染图落错目录 / 语言漂移」（2026-10-30 · 第十三轮）
+
+用户实跑「儿童防近视坐姿提醒器」时暴露三个问题，逐个定位并修掉：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 第二、三张图被「本阶段已落盘，请先确认」拦死 | `generate_product_image` 出**一张**图就 `_stage_done("10_appearance")`，阶段立刻锁住 | 改成 `_sync_stage(rel)`：只有契约产物（appearance.md + orthographic.svg + render-01.png）齐全才置 done |
+| 渲染图出现在「其它文件」分组，不在 10_appearance | 模型传的是裸文件名 `render-01.png`，落盘掉进工作区根 | 新增 `tools._in_stage_dir()`：没带目录就按 kind 归位（render→10_appearance，exploded→20_structure） |
+| 思考与汇报漂移到波斯语 | 提示词只说「面向用户的输出用中文」，没约束 thinking | main_agent / subagents `COMMON_RULES` 加语言硬约束：含思考文本在内一律简体中文，点名禁止波斯语/阿拉伯语 |
+
+护栏同步放宽（`stagestate.guard`）：**DONE 状态 + 目标文件在磁盘上不存在 → 放行**，
+因为「补齐第二张图」不算「把第一张重做一遍」。只对多产物工具
+（`generate_product_image` / `render_product_views`）生效 —— 建模/原理图不豁免，
+否则换个文件名就能绕过闸门。CONFIRMED 仍拦（已确认的一版不该再加图），有熔断兜底。
+
+回归：`scripts/test_stage_once.py` 新增【11】【12】【13】三组共 11 项断言（落盘归位、
+新文件放行、已存在仍拦、出一张图不锁阶段、语言约束）；顺手修两处过期断言
+（`test_human_gate` 工具数 12→≥12；`test_loop_guard` 预算改用范式档位）。
+相关回归全绿：stage_once / deadlock / artifact_guard / image_ref / visual_chain /
+artifact_sync / goal_stop / human_gate / loop_guard / workspace_path / path_resolve。
+worker 已重启（无活跃会话时）。
+
+---
+
+## 最新改动：阿里云部署方案（2026-10-30 · 第十二轮）
+
+需求：把项目搬到服务器（阿里云 ECS），要部署脚本 + 部署流程。产出 `deploy/` 全套：
+
+| 文件 | 作用 |
+|---|---|
+| `deploy/agentctl.sh` | 总入口：`init/up/down/restart/update/status/logs/backup/ssl` |
+| `deploy/docker-compose.yml` | worker + web + nginx 三容器编排，data/workspace 挂卷 |
+| `deploy/Dockerfile.worker` / `Dockerfile.web` | python:3.13-slim / node:22-slim，已配阿里 PyPI 与 npmmirror |
+| `deploy/nginx/conf.d/*.conf` | 反向代理 + **SSE 透传**（`proxy_buffering off` / `gzip off` / 3600s） |
+| `deploy/requirements.txt`（+`-cad.txt`） | 项目此前没有依赖清单，按实测环境补 |
+| `deploy/env.prod.example` | 生产环境变量模板，含大陆 ECS 出网注意事项 |
+| `deploy/bare/*` | 不用 Docker 时的 systemd + 宿主机 nginx 备选方案 |
+| `deploy/README.md` | ECS 选型 / 安全组 / HTTPS / 运维 / 排障速查 |
+
+代码侧唯一改动（为容器化）：`agent/config.py` 新增 `AGENT_HOST`，`agent/server.py` 的
+`uvicorn.run` 不再硬编码 `127.0.0.1`（容器内不绑 0.0.0.0 时 nginx 与跨容器访问全连不上）。
+默认仍是 `127.0.0.1`，本机开发零影响。另新增 `.dockerignore` 给构建上下文瘦身。
+
+---
+
+## 最新改动：修掉「结构阶段死循环」（2026-10-30 · 第十一轮）
+
+用户实跑反馈：结构阶段智能体**卡在护栏里出不来** —— 建模发现上盖尺寸错了想改，
+被护栏拦 → 去请用户确认 → 确认完想改，被拦得更死 → 再确认 → 再被拦。
+8 次 `text_to_cad` / `build_structure` 全部被拒，预算烧光，阶段还停在错模型上
+（用户最后手动取消了那次运行 `162a24d2ed04`）。
+
+### 根因：两个缺陷咬在一起
+
+**① 脚本能跑通 ≠ 模型是对的。** 建模工具只判「脚本有没有报错」，成功了就无条件
+`_stage_done("20_structure")` 把阶段锁住。上盖用 `Sphere(半径 340)` 做微拱，布尔之后
+包围盒变成 **100×100×341mm**，照样报「建模成功」—— 阶段一锁，谁都改不动。
+
+**② 护栏没有熔断。** `stagestate.guard()` 只有「放行 / 拒绝」两态。产物一旦置 done
+（更别说 confirmed），模型想纠错就只有一条路：`confirm_with_user`。而提示词里还写着
+「看到拦截就照做去确认」—— 于是确认→被拦→确认→被拦，无限循环。
+
+### 修法
+
+| 位置 | 改动 |
+|---|---|
+| `agent/tools.py` | 新增 `_cad_sanity()`：建模成功后做**几何自检**（体积≤0 / 任一维>500mm / 最长边超脚本声明外形的 2.5 倍）。畸形就**不置 done**（阶段不锁），并返回「哪个零件哪一维、常见原因（大半径辅助体布尔残留）、怎么改」+ 明确告知「本次没锁阶段，直接改脚本重跑，不用去 confirm」 |
+| `agent/stagestate.py` | `guard()` 加**熔断**：同一状态连拦 N 次（done 拦 1 次、confirmed 拦 2 次）就放行一次自我纠错，状态退回一档（confirmed→done / done→working），做完重新走确认。拒绝文案里写明「再调用一次就会被放行」，给模型一条明确的路 |
+| `agent/main_agent.py` / `agent/subagents.py` | 提示词补**唯一例外**：产物有客观错误（尺寸离谱 / 0 字节 / 图里主体缺失）时**不要去 confirm，直接改了重跑** |
+
+熔断是**通用**的，不只救建模 —— `generate_product_image` / `render_schematic` / `build_bom`
+这些上锁的昂贵工具都跟着受益。
+
+**新增 `scripts/test_deadlock.py` 17 项**（几何自检 6 + 熔断 11）；
+`test_stage_once` / `test_pipeline` / `test_artifact_guard` 回归不变。worker 已重启。
+
+---
+
+## 第十轮：全链路体检 + 待办清单（2026-10-30）
+
+用户要求「启动服务、跑完整设计流程、看看有啥问题」。服务本身是活的（worker :8001 /
+前端 :3000），于是用 `run_product_e2e.py` 起了一次真实需求做验收（土壤湿度检测仪，
+`run_id=e4b4acb5ac7a`，可在界面上同步观察），同时把整条链路体检了一遍。
+
+### 体检发现的 4 个真问题（已修）
+
+| # | 问题 | 影响 | 修法 |
+|---|---|---|---|
+| 1 | 前端 `isBinary` 只认 `step\|stp\|stl\|3mf\|zip`，**不认 `.epro`** | 用户点开嘉立创工程看到一屏乱码（zip 二进制当文本渲染） | `web/app/page.tsx` 正则加 `epro` |
+| 2 | `stages.py` 交付清单写 `30_hardware/schematic.svg`，实际产出是 `board.schematic.svg` | 交付清单里那条链接 404 | 改成真实文件名 |
+| 3 | `stages.py` 标题 + `subagents.py` 提示词仍写「`.epro` 只有 PCB、没有原理图页」 | **模型会在交付说明里向用户写错**，说没有原理图 | 改成「PCB 段与原理图页都有，符号封装取自立创官方库」 |
+| 4 | `main_agent.py` 文件名契约清单漏了 `board.epro` / `board.schematic.svg` | 子智能体可能给产物改名 → 交付清单认不出 | 补进契约清单 |
+
+### 验收脚本补齐最后一环
+
+`scripts/check_real_board.py` 原来只校验 KiCad PCB，新增 **【5】嘉立创 .epro** 段（13 项）：
+zip 结构（project.json / PCB / FOOTPRINT / SYMBOL / SHEET）、原理图器件都在 A4 内、
+符号不止一种、有网络标签、有预览 SVG、KiCad 导入器回读（封装数/焊盘数/网络数/空位号）。
+拿已有真实工程 `e60f46e54e23` 实测全绿（26 封装 / 145 焊盘 / 17 网络 / 80.2×50.2mm）。
+
+`README.md` 补「电路设计：原理图 + PCB」章节：两条输出链路（KiCad 主 / 嘉立创副）、
+立创官方库数据来源、已知边界（不布线、KiCad 链路未接库、`.epro` 是 v2.2）。
+
+### 下一步清单（按影响排序）
+
+| 优先级 | 事项 | 说明 |
+|---|---|---|
+| P0 | **KiCad 链路接立创官方库** | `board.kicad_pcb` / `schematic.kicad_sch` 仍是参数化符号 + 近似封装。库数据已在手，是纯转写工作（符号图元 + 焊盘几何两套映射）。不做的代价：用户打开 KiCad 看到的封装和 `.epro` 里不一样 |
+| P1 | 原理图加 GND / VCC 电源符号 | 现在全是短线挂文字标签，观感影响最大 |
+| P1 | **C1（100nF 去耦）与 J2（PMS7003 排针）悬空** | netlist 里没有连线记录，**等你确认接法**后补 |
+| P2 | 原理图功能分区框 + 区名 | 没有虚线框，看不出「这是一块电路」 |
+| P2 | 引脚名落地到 `.esym` | 现在只有网络名，看不出这根是 SDA 还是 SCL |
+| P2 | 排版：大件撑高整行 | U1（128×288）把整行撑高，同行小件悬在中间 |
+| P3 | 立创库命中率 16/22 | 兜底 6 个：PMS7003、J2 排针、锂电、3mm 直插 LED、OLED |
+| P3 | **代码未提交** | `agent/eda/` 整个目录 + 6 个脚本都还是未跟踪状态 |
+
+---
+
+## 第九轮：原理图排版重做 + 生成时自带预览（2026-10-30）
+
+用户实测反馈「原理图一点不美观」，但明确要求**先跑通流程、美观慢慢优化**。
+这一轮只做两件不阻塞流程的事：
+
+### 1. 排版从「图纸无限」改成「A4 内自适应」
+
+旧版按 `SHEET_W=1300` 一路往右铺、超宽才换行，22 个器件直接铺到 **y=1211**
+（A4 只有 825）—— 打开就是一堆跑出纸外的符号。现在：
+
+- **按功能流排序聚团**（`_FLOW` 表）：接口 → 电池 → IC → 模块/传感器 →
+  晶振/阻容 → 二极管/LED → 开关/蜂鸣器。同类挨在一起，不再按位号字母序
+  把电阻和 ESP32 混排。
+- **试 1..n 行，取第一个能整体落进 A4 可打印区的方案**，行高自适应、行内均布、
+  竖向居中；器件过多才压行距兜底，**绝不超纸**。
+
+结果：`x 116..1054 / y 80..748`，完全在 A4（1170×825）内。
+
+### 2. `agent/eda/preview.py`：纯 Python 渲染原理图 SVG
+
+不依赖浏览器/客户端，生成 `.epro` 时自动多出一份 `board.schematic.svg`，
+浏览器直接打开就能看排版。三个 `.esch` 字段陷阱记在模块头里：
+
+- `RECT` 存**两个角点** (x1,y1,x2,y2)，不是 x/y/w/h；
+- `POLY` 的点是**扁平数组** [x1,y1,x2,y2,…]，闭合标志在第 4 列；
+- `PIN` 的 (x,y) 是引脚**外接点**，线段朝 rot 方向延伸 len。
+
+### 仍未解决（用户已同意后续再打磨）
+
+原理图「好看」还差这些，按影响排序：
+
+1. **没有电源/地符号** —— 现在 GND/3V3 全是一根短线挂个文字标签，正经原理图
+   这里应该是 GND 三角/横线、VCC 箭头，且朝下/朝上统一。
+2. **器件之间没有视觉分区** —— 没有虚线框 + 区名（电源区/主控区/传感器区）。
+3. **引脚名不显示** —— 库符号里 PIN 的 `NAME` 属性没落地到 `.esym`，只有网络名，
+   看不出「这根是 SDA 还是 SCL」。
+4. **行内均布会在大件旁留白** —— U1（128×288）把整行撑高，同行的 AHT20/OLED 悬在中间。
+
+---
+
+## 第八轮：原理图与 PCB 改为「基于立创官方元件库」（2026-10-30）
+
+用户实测反馈三条：**符号长得一模一样**、**没有型号名**、**PCB 封装不对**。根因是之前
+符号/封装都是参数化猜的（两脚器件一律画同一个矩形、封装按 `size_mm` 铺焊盘），
+跟真实器件无关。这一轮改成：**按型号去立创官方库查 LCSC 编号，拉真符号 + 真封装**。
+
+### 数据源（公开只读，无需鉴权）
+
+| 用途 | 接口 |
+|---|---|
+| 搜型号 → LCSC 编号 | `GET https://easyeda.com/api/eda/product/list?keyword={kw}&currentPage=1&pageSize=N`（参数是 `keyword`，`wd` 无效） |
+| 取器件（符号+封装） | `GET https://easyeda.com/api/products/{LCSC}/components?version=6.5.17` |
+
+`result.dataStr.{head,shape}` 是原理图符号，`result.packageDetail.dataStr` 是 PCB 封装。
+
+### 单位：两侧完全不同（最容易踩的坑）
+
+- **符号**：标准版 1 单位 = 0.1 inch = Pro 原理图 1 单位 → **1:1**
+- **封装**：标准版 1 单位 = 10 mil → Pro PCB **×10**
+- 标准版封装坐标是**画布绝对坐标**，必须先减 `head.x/head.y` 再缩放
+
+### 匹配策略（全部「宁可兜底也不配错」）
+
+1. 显式 `lcsc` → 直接用
+2. 型号搜库，置信分 ≥ 40（型号相等 100 / 前缀 60 / 包含 45 / 仅封装族同 20）
+3. 「型号 + 种类词」再搜一轮（`SSD1306 OLED`）
+4. 「规格 + 种类」搜（`USB-C 16PIN` → `TYPE-C 16P`、`LED 3mm`）
+5. 通用件按「种类 + 封装尺寸」取模板件（电阻/电容/LED…），只借符号形状与封装几何，
+   `from="generic"` 标记，**BOM 里不写它的编号**
+6. 全败 → 本地兜底图形（按 kind 画：电阻矩形、电容双线、LED 三角+箭头、电池长短线、
+   连接器针脚、模块双线外框、多脚 IC 方框）
+
+### 三次「配上了但配错」，都比配不上更糟
+
+| 器件 | 错误结果 | 修法 |
+|---|---|---|
+| `USB-C` | `C2337 2.54-1*40P直针`（40P 排针） | 连接器不给 default；名字含 USB/TYPE-C/JACK 的一律不按脚数配排针 |
+| `SSD1306-OLED-1.3` | `C52098030 SSD1306-150MT`（顺络贴片电感） | 加 `_pkg_clash()`：库件封装大类（`IND-`/`BAT-`/`HDR-`…）与器件种类冲突就否决 |
+| `800mAh-LiPo` | `C70382 CR2032`（纽扣电池座） | 电池不给 default；直插件（`3mm`/`THT`/`DIP`）不给贴片映射 |
+
+⚠ SSD1306 那条还带出一个隐蔽点：**搜索结果里的 `package` 是 `SMD,18.5x15.2mm` 这种简写，
+看不出类别**，只有下载详情后才是 `IND-SMD_...`。所以种类冲突必须在 `fetch()` 之后再判
+一次，只在搜索结果上判等于没判。
+
+### 另外两个真 bug
+
+- **`POLYGON` 焊盘让 KiCad 导入器直接段错误**（无输出、rc≠0）。标准版有这个形状，
+  但顶点没带在接口返回里，Pro 也不认这个形状名 → 一律降级成同尺寸矩形。
+  定位方式：逐个器件单独生成 `.epro` 再回读，22 个里只有 ESP32 模块那个崩。
+- **立创接口有频控**：连打十几次回 403，之后整批器件退回本地图形（表现就是
+  「封装全都不对」）。修法：请求间 0.35s 最小间隔 + 403 退避重试 + **搜索结果也落盘**
+  （之前只缓存器件详情，每轮都重搜）+ 探测失败只信 120s（成功才永久缓存）。
+
+### 结果
+
+`workspace/e60f46e54e23/30_hardware/board.epro`：
+
+- **16/22 器件用上官方库**（ESP32-C3-MINI-1 61 焊盘 / TP4056 ESOP-8 / AMS1117 SOT-223 /
+  AHT20 6 脚 / USB-C TYPE-C 16P 20 焊盘 / 0603-0805 阻容 / 6mm 轻触开关）
+- 6 个走本地兜底：PMS7003、J2 排针、800mAh 锂电、2 只 3mm 直插 LED、OLED 屏
+- KiCad EASYEDAPRO 导入器回读：26 封装（22 器件 + 4 孔）、145 焊盘、17 网络、
+  板框 80.2×50.2mm、无空位号
+- 回归：`test_lib`(48) + `test_easyeda`(90) + `test_kicad`(58) + `test_pcb`(62) +
+  `test_gerber`(24) + `test_artifact_sync`(10) = **292 项全绿**
+
+---
+
+## 上一轮：补上原理图段（SCH），工程打开后有原理图 + PCB（2026-10-30 · 第七轮）
+
+`.epro` 现在同时带 **原理图页** 和 **PCB**：工程树 `main → schematic → MAIN` 与
+`main → board → PCB1` 两枝都有。
+
+### 关键发现：原理图是靠网名并网的，不是靠线几何
+
+真机工程里 `I2C_SDA` 有 13 根**互不相接**的短线，每根都挂着一个属性：
+
+```json
+["WIRE","e2553",[[995,635,1045,635]],"st25",0]
+["ATTR","e2554","e2553","NET","I2C_SDA",0,1,995,635,0,"st1",0]
+```
+
+也就是说：**给一根线挂 `NET` 属性 = 网络标签**，编辑器按名字并网。
+这一条决定了实现方式 —— 每根引脚只画一小截引出线 + 一个同名标签，
+不需要跨图走线，也就绕开了「线与线相交算不算连通」这个说不清的坑。
+
+### 新增文件
+
+- `agent/eda/sch.py`（新）：符号 `.esym` + 图纸 `.esch` 的生成。
+- `agent/eda/easyeda.py`：装配时并入原理图段 —— 器件复用 PCB 那批 device
+  （只是把 `attributes.Symbol` 补上，库元件才是"符号+封装"齐全的），
+  `project.json` 增加 `schematics` / `symbols` 索引，`boards` 同时挂 schematic 与 pcb。
+
+### 格式要点（都写进 `sch.py` 的文档头了）
+
+| 项 | 值 |
+|---|---|
+| 图纸单位 | 1/100 英寸（A4 = 1170×825），栅格 10 —— **与 PCB 段的 mil 不是一回事** |
+| `COMPONENT` | 9 段：`[类型, eid, 部件名, x, y, 旋转, 镜像, {}, 0]`，旋转 0/90/180/270 |
+| `ATTR` | 12 段：`[类型, eid, 宿主eid, 键, 值, 0, 可见, dx, dy, 旋转, 字体, 0]` |
+| `PIN` | 11 段，`(x,y)` 是**外接点**（线连到这里），线体朝角度方向延伸 |
+| `WIRE` | 5 段：`[类型, eid, [[x1,y1,x2,y2],…], 线型, 0]`，可以是零长度（纯标签） |
+| 网络 | `ATTR` 挂在 WIRE 上，键 `NET`，值 = 网名 |
+
+### 画法
+
+- 符号按「型号 + 脚数」去重：两脚器件左右各一脚；多脚器件左半自上而下、右半自下而上（常规 IC 画法）。
+- 排版是书架式，4 列 × 6 行，列距 340（1/100 英寸），相邻符号留 ~160 的标签空间。
+- 每个引脚：一小截 30 的引出线 + 一个 `NET` 标签。**没有连线的引脚就只有线没有标签**，
+  跟 PCB 侧"没网络的焊盘"一致 —— 不会凭空造出连接。
+
+### 验证
+
+`scripts/test_easyeda.py` 新增第 11 组（共 88 项）：
+
+- `SHEET/**/*.esch` 与 `SYMBOL/*.esym` 都在；`project.json` 的 `schematics` / `symbols` 索引与文件一一对应；
+- 行长度：COMPONENT 9、ATTR 12、WIRE 5、PIN 11；
+- 每个器件的 `Symbol` / `Device` 属性都指向真实存在的条目，且 device 的 `Symbol` 已补齐；
+- **每根线的起点都落在某个引脚外接点上**（器件原点 + 符号引脚偏移，逐条算）；
+- **每个 NET 标签的「位号.引脚 → 网名」与网表逐条比对**（这是之前 PCB 侧出过错的地方，
+  原理图侧同样加了这道锁）。
+
+PCB 侧没有回归：KiCad 导入器回读仍是 26 器件 / 91 焊盘 / 17 网络 / 空位号 0 / 板框 80.2×50.2mm。
+全量回归 293 项全绿（easyeda 88 / kicad 58 / pcb 62 / gerber 24 / pipeline 51 / artifact_sync 10）。
+
+### 仍未验证
+
+本机没有 EasyEDA 客户端。原理图段目前只能做**结构自检**，没有像 PCB 段那样有
+KiCad 导入器可以回读（KiCad 的 EASYEDAPRO 导入器只管 PCB）。所以"打开长什么样"
+仍需你实测。已知的不确定点只有一处：`ATTR` 的坐标在真机里两种解释都能自圆其说，
+连通是靠 `ATTR` 的宿主 eid 而不是坐标，**最坏情况只是标签文字位置偏一点**。
+
+---
+
+## 最新改动：PCB 飞线缺失的两条根因（2026-10-30 · 第六轮）
+
+用户反馈「有器件没有飞线」，问是不是原理图画错了。查下来是**两个独立问题**。
+
+### 一、这个 `.epro` 里根本没有原理图页
+工程树只有 `main → board → PCB1`。飞线不来自原理图，来自 PCB 里的 `PAD_NET` 行。
+所以不存在"原理图连线丢了"，而是 PCB 上的引脚压根没有被赋上网络。
+
+### 二、网表端点漏点号 → 整只器件掉线
+`netlist.json` 里 12 个端点写成了 `BAT1正极` / `C2正极` / `C2负极`…（少了 `位号.引脚名` 中间那个点）。
+旧规范化逻辑把这种字符串当成**一条只有一个端点的裸网络**，于是：
+
+- C2~C6 五只电容、BAT1 电池在网表里"不存在于任何连线" → 拿默认引脚摆上去，无网络；
+- 那几条单点网络被丢弃，`nets` 反而少了一条。
+
+修法（`agent/eda/netlist.py`）：
+
+1. `_POLARITY` 表认 `正极/负极/阳极/阴极/+/－/pos/neg` 等写法；
+2. `_split_endpoint()` 多一个分支：没有点号时从右往左剥极性词，剩下的必须形如 `字母+数字` 才认作位号
+   （`电池正极` 这类纯文字仍当网络名，不误判）；
+3. `_pin_on()` 按器件种类落地：电容/电阻 → `1/2`，LED/二极管 → `A/K`，电池/喇叭/电机 → `+/-`；
+4. **回写端点字符串**——网络是按端点字符串聚合的，只映射不回写等于没改；
+5. 电池正极那条线按惯例命名 `VBAT`（否则会变成 `N$001`）。
+
+### 三、顺手挖出的第二个 bug：网络号差一位
+`_net_table()` 返回的 `{名: 号}` 是 **1 基**（0 = 无网络），而 `names` 列表是 **0 基**，
+`easyeda.py` 里写成 `net_names[nid]` → 所有焊盘网络**整体错位一条**。
+真机表现就是：C2 的正极被连到 `I2C_SCL`、C5 的正极被连到 `VBAT`，看着有飞线但全连错了。
+KiCad writer 一直是对的（`net_names[nid - 1]`），只有 EasyEDA 这条错了 —— 这类"两边都写了、
+只有一边差一"的 bug 靠肉眼比对两份输出根本发现不了，必须有回读校验。
+
+### 四、验证
+用 KiCad 的 EasyEDA Pro 导入器回读修复后的工程：
+
+| 器件 | 焊盘→网络 |
+|---|---|
+| C2 | 1=VBUS, 2=GND |
+| C5 | 1=3V3, 2=GND |
+| BAT1 | +=VBAT, -=GND |
+| R1 | 1=3V3, 2=I2C_SDA |
+| U1 | GND=GND, VCC=3V3, BAT=VBAT |
+
+KiCad 版 `.kicad_pcb` 同样核对过，两个 writer 一致。
+
+### 五、防复发（三层）
+1. **提示词**：`subagents.py` 里加反例（`C2正极` ✗ / `C1.1` ✓），并要求「每个元件至少 2 条连线」；
+2. **自检**：`check_circuit` 新增第 8 条规则 —— 列出没有任何连线的元件、列出少点号的端点；
+3. **测试**：`test_kicad` 58 项（+6 极性用例）、`test_easyeda` 57 项（+2：网络名必须已声明 /
+   引脚→网络逐条比对网表），全量回归 262 项全绿。
+
+### 六、还剩两处**不是格式问题**的缺口
+`C1`（100nF，U1 去耦）和 `J2`（PMS7003 三针排针）在 netlist.json 里**完全没有连线记录**，
+不是解析问题，是硬件阶段漏写。工具输出现在会明确点名这两只，不再让人猜。
+
+---
+
+## 最新改动：嘉立创工程改按真机格式重写（2026-10-30 · 第五轮）
+
+用户给了一份**客户端 4.1.78 导出的真实工程**（立创·实战派ESP32-S31开发板）当金标准，
+一比对发现之前的 writer 从根上就错了。
+
+### 一、根因：我之前照的是"规范"，不是真机
+
+| 维度 | 我原来的写法 | 真机 |
+|---|---|---|
+| 文件组织 | 单文件 `<name>.epru` 装全部 | **分文件** `project.json` + `PCB/*.epcb` + `FOOTPRINT/*.efoo` |
+| 行格式 | `{外层}\|\|{内层}\|`（V3 规范） | **逐行一个 JSON 数组** `["LAYER",1,"TOP",...]` |
+| 器件引用 | `attrs.Footprint` | `ATTR` 三条：**Footprint + Device + Designator** |
+| 库索引 | 无 | `project.json` 的 `footprints` / `devices` 两张索引 |
+
+官方 V3 规范文档和客户端实际导出的文件是**两套不兼容的格式**。用户第一次导入能建出
+工程树（`main www → board → PCB1`）但画布空白，根因就在这。
+
+### 二、真机格式要点（已落进 `agent/eda/data/epcb_head.json`）
+
+- 层号固定：1 TOP / 2 BOTTOM / 3 TOP_SILK / 11 OUTLINE / 12 MULTI，封装内另有
+  48 外形框 / 49 标记 / 50 焊接区
+- `["COMPONENT",eid,0,layer,x,y,rot,{attrs},0]`，坐标 mil
+- `["ATTR",eid,0,compEid,4,x|null,y|null,key,value,...]`，**22 个字段**
+- `["PAD",eid,0,"",layer,pin,x,y,rot,["ROUND",drill,drill],["RECT",w,h,r],[],...,0]`，22 字段
+  - SMD 无钻孔时写 `0.03937`（=1µm）占位，不写 0
+- `["PAD_NET",compEid,pin,netName,padEid,0]`：padEid 必须是**封装里真实的**那个编号
+- `["POLY",eid,0,"",layer,width,[x1,y1,"L",x2,y2,...],0]`：点列只写一个 "L"，后续全是坐标对
+
+### 三、修的过程中踩到的两个坑
+
+1. **封装不能内嵌进 .epcb**。真机里也有内嵌段，但那是"本地改过的封装缓存"。
+   我照做后发现 26 个器件变 96 个（多出 70 个空位号）—— 内嵌段被当成未放置器件。
+   走外置 `.efoo` + project.json 索引才对。
+2. **板框点列要自己闭合**。`board.outline_points()` 首尾不重复（KiCad 那边逐段连线补），
+   EasyEDA 这边不补就缺最后一段边。
+
+### 四、这次终于有本地验证器了
+
+发现 **KiCad 10 自带的 EasyEDA Pro 导入器能读 v2.2 格式**（`PCB_IO_MGR.EASYEDAPRO`
++ `pcbnew.Python`，在 `E:/KiCad/10.0/bin/python.exe`）。之前验证 v3 格式时它返回空板/段错误，
+是因为 v3 是另一套格式；v2.2 能正常解析。
+
+于是 `test_easyeda.py` 变成两条腿：
+- 结构断言（55 项，含字段数逐类对齐真机）
+- **KiCad 回读**：器件数、位号、焊盘数、板框尺寸四项交叉验证
+
+真实会话产物验证结果：26 个器件（22 + 4 孔）、91 个焊盘、17 个网络、
+板框 80.2×50.2mm、**0 个空位号**。
+
+### 五、改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `agent/eda/easyeda.py` | **重写**：v2.2 分文件 zip 格式 |
+| `agent/eda/data/epcb_head.json` | 新增：从真机提取的样板头（层表/规则/显示开关） |
+| `agent/eda/pcb.py` | 抽 `pad_positions()` 供两个 writer 共用焊盘位置 |
+| `agent/tools.py` / `stages.py` / `subagents.py` | 产物名 `.epro2` → `.epro`，文案同步 |
+| `scripts/test_easyeda.py` | **重写**：55 项（含 KiCad 回读） |
+
+**回归**：test_easyeda 55 / test_pcb 62 / test_kicad 52 / test_gerber 24 /
+test_pipeline 51 / test_artifact_sync 10 —— 全绿。
+
+**仍未验证**：没在 EasyEDA 客户端里实际打开过新文件。但这次不是靠猜——格式是
+从用户给的真机工程逐字段抄下来的，且 KiCad 的 Pro 导入器回读四项指标全对。
+
+---
+
+## 最新改动：产物登记补齐 + 嘉立创 `.epro2` 副输出（2026-10-30 · 第三轮）
+
+### 一、先纠正上一轮的一个误判：固件阶段没有卡死
+
+上一轮我报告「固件阶段卡 35 分钟无产出」，**是错的**。翻事件流账：
+
+| 时刻 | 实际发生 |
+|---|---|
+| 10:52 | 硬件阶段 netlist.json 落盘，门禁放行固件 |
+| 10:54–11:04 | 固件阶段正常推进：查文档 → 写代码 → `check_arduino` 自检 4 轮 → 改代码 |
+| 11:04:48 | `firmware.md` / `simulation.md` 写盘 |
+| 11:06:23 | `firmware.ino` 写盘，阶段 `status=done` |
+| 11:06 | **我重启 worker 加载新工具**，运行被标 `interrupted` |
+
+误判有两个来源，都值得记住：
+
+1. **监控接口选错**：`/api/runs/{id}` 里的 `files` 只认 `artifact` 事件，而子智能体常用
+   `write_file` / `edit_file` 直写，不经过 `save_artifact`。磁盘上文件早就在，事件流里没有。
+   真正权威的是扫磁盘的 `/api/runs/{id}/files`（这次是 95 个文件）。
+2. **我自己的重启打断了它**，却当成「模型陷进去了」。
+
+### 二、顺着这个误判修掉的真 bug
+
+`Run._maybe_scan_goal()` 早就有磁盘扫描兜底（注释写着「模型常绕过 save_artifact 直接 write_file」），
+但它只把路径并进 `self.artifacts` 判据，**没有推事件**。于是运行中实时产物面板一直空着，
+只有刷新扫磁盘才看得到 —— 用户和我的体感都是「跑了半天没东西」。
+
+修：扫到新文件时补发 `artifact` 事件（带 `source: "disk"` 标记来源），并用 `_scanning` 闸
+挡住 `push` 回调导致的递归。新增 `scripts/test_artifact_sync.py`（10 项）。
+
+顺带修了 `test_harness.py` 一个假失败：它拿全局 `config.TOOL_BUDGET` 循环，而真实阈值是
+`min(档位预算, HARD_TOOL_BUDGET)`，按需求文本路由出的档位可能更高 —— 照全局值循环够不着阈值。
+
+### 三、P2：嘉立创 EDA 专业版 `.epro2` 副输出
+
+新增 `agent/eda/easyeda.py` + 工具 `emit_easyeda`。格式依据全部落到 `docs/easyeda-spec/`：
+
+- 官方《嘉立创EDA 文件格式》V3 规范（`v3-spec.md`，102KB，离线可查）
+- 官方规范包里的真实工程（泰山派1F 金手指核心板，61322 行）—— 照着它的行格式写
+
+工程结构 = ZIP：`project2.json` + `<name>.epru`（JSON Lines，每行 `{外层}||{内层}|`，按 `DOCHEAD` 分段）。
+坐标单位是 **mil**（规范正文写 0.01 inch，按范例 `lastViaInnerDiameter: 39.37` = 1mm 反推实为 0.001 inch）。
+
+**与 KiCad 版同源**是关键设计：焊盘几何抽成 `pcb.pad_geom()` 两边共用，布局坐标共用 `pcb._place()`。
+两份输出如果是两套数，用户对比时会以为板子做错了。
+
+**能验到什么程度（如实标注）**：
+- ✅ 结构自验 25 项（`scripts/test_easyeda.py`）：JSON Lines 合法、无 CR、文档分段顺序、
+  板框闭合与尺寸换算、焊盘数与引脚数一致、PAD_NET 网络都已声明、安装孔是有孔焊盘
+- ✅ 与 KiCad 版一致性：坐标与焊盘尺寸逐项比对
+- ❌ **没有「双击打开」验证**：KiCad 10.0.7 的 EasyEDA Pro 导入器对 v3（连官方范例也一样）
+  要么返回空板要么段错误 —— 它只认 v2；本机也没装 EasyEDA 客户端
+
+已知边界：本版只写 PCB 段，**没有原理图页**；同样不布线。工具描述与提示词里都写明了。
+
+> ⚠️ **本段已被后续轮次取代**（第七/八/九轮）：格式改为 **v2.2 zip 容器**（不是 V3 单文件），
+> 已补原理图段（`SYMBOL/*.esym` + `SHEET/*/1.esch`），封装与符号改为**从立创官方库拉取**，
+> 并用 KiCad 的 EASYEDAPRO 导入器回读校验通过。以上 V3 相关描述仅作历史记录保留。
+
+### 四、本轮改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `agent/server.py` | 磁盘扫描补发 artifact 事件 + `_scanning` 递归闸 |
+| `agent/eda/easyeda.py` | 新增：EasyEDA Pro V3 工程 writer |
+| `agent/eda/pcb.py` | 抽出 `pad_geom()` 供两个 writer 共用 |
+| `agent/tools.py` | 新增 `emit_easyeda`（第 16 个工具） |
+| `agent/stages.py` / `agent/subagents.py` | 契约加 `board.epro2`；硬件提示词加导出步骤 |
+| `scripts/test_artifact_sync.py` / `test_easyeda.py` | 新增 10 / 25 项 |
+| `scripts/test_harness.py` | 修假失败（预算阈值取 Run 自己的） |
+| `docs/easyeda-spec/v3-spec.md` | 官方规范（离线留档，大文件未入库） |
+
+**回归**：test_pcb 62 / test_kicad 52 / test_gerber 24 / test_easyeda 25 / test_artifact_sync 10 /
+test_pipeline 51 / test_artifact_guard 28 / test_harness 31 —— 全绿。
+
+---
+
+## 最新改动：真实产品闭环验证 + Gerber 制造文件（2026-10-30 深夜 · 第二轮）
+
+**闭环验证**：用一句真实需求跑了完整六阶段（ESP32-C3 空气质量检测仪，92×62×24mm 圆角外壳），
+结构工程师**真的产出了合规 `board.json`**（80×50mm 圆角 3mm、4 个 ⌀3.2 孔、电池仓与 USB-C 禁布区、
+`J1→right` 边约束、限高 11mm），硬件阶段自动调 `emit_pcb` 出了 `board.kicad_pcb`。
+这是第一次用模型自己写的板级约束（而不是手写样例）跑通链路。
+
+**真实数据暴露的 5 个 bug（手写样例测不出来）**：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| DRC 9 条 clearance | USB-C 12 脚按器件外形排脚，节距 1.14mm 而焊盘高 1.0mm → 间隙 0.14mm | 密脚器件把本体撑高保证节距 ≥1.15mm，焊盘高度再收到 `节距-0.25` |
+| `lib_footprint_mismatch` | 两个引脚数相同但尺寸不同的 IC 共用 `ic_5p` 封装名，库里只剩最后写的那个 | 封装名带尺寸：`ic_5p_7x6.5` |
+| courtyard 重叠 2 + 丝印重叠 7 | 器件放不下时**硬塞板中心**，压在主控上 | 布局三级降级（标准间距→1.2mm→0.6mm），实在不行才居中并如实记 warning |
+| 丝印被板边裁 2 | 位号文字在本体外 1.9mm，靠边器件必被裁 | 按离板边的真实距离决定位号放 `F.SilkS` 还是退到 `F.Fab` |
+| 安装孔位号被裁 | 孔在四角，位号固定画在孔下方 | 孔位号改到 `F.Fab` |
+
+结果：**21 条 DRC 违规 → 0 条**（33 个 unconnected 是"未布线"的必然结果，不算违规）。
+回归 `test_pcb` 62 / `test_kicad` 52 / `test_pipeline` 51 全绿。
+
+**Gerber 制造文件通道（P2 第一块）**：新增 `export_gerbers` 工具 → `agent/eda/gerber.py`，
+走本机 `kicad-cli` 无头导出 Gerber RS-274X + Excellon 钻孔 + 贴片坐标，打包 `30_hardware/gerber.zip`
+（含 README 说明）。没装 KiCad 时**明确告知**并给手工导出步骤，不假装成功。
+坑：KiCad 10 的铜层文件名是 `board-top_cu.gtl`（KiCad 8/9 是 `-F_Cu.gtl`），"必需层"清单两种都要认。
+
+**新增脚本**：`scripts/check_real_board.py`（校验真实会话 board.json + PCB + DRC）、
+`scripts/run_product_e2e.py`（跑真实产品并自动点人工闸门）、`scripts/test_gerber.py`（24 项）。
+
+**已知遗留**：① 固件阶段在本次运行里卡住 35 分钟无产物（待查，可能与长上下文/超时有关）；
+② 电池座占位 26×26mm 由模型自填，挤占板面 —— 器件库应补电池座的真实尺寸约束。
+
+---
+
+## 最新改动：PCB 落地 · board.json 板级约束 + .kicad_pcb 生成（2026-10-30 深夜）
+
+硬件阶段现在能出**真板子文件**了，链路是 `netlist.json + board.json → board.kicad_pcb`。
+
+**为什么先加 board.json**：之前内腔尺寸只写在 `structure.md` 的 markdown 表格里，而且三个真实会话
+三种写法（圆形 `φ76mm` / 竖排参数表 / 按方向分行）。程序要自动读就得猜列，猜错了**板子画出来装不进壳**，
+还不报错。现在结构阶段强制多产出一个机器可读的 `board.json`（表格照留，人看的体验不变）。
+
+**board.json 支持的板型**（外观是圆是方，板子就得跟着）：
+
+| 外观 | 写法 |
+|---|---|
+| 矩形 / 圆角矩形 | `"shape":"rect"` + `"corner_radius_mm": 3`（超短边一半自动收敛） |
+| 圆形产品 | `"shape":"circle"` + `"diameter_mm": 60` |
+| 跑道形 | `"shape":"rect"` + 大圆角（如 15mm） |
+| L 形 / 水滴形 / 不规则 | `"shape":"polygon"` + `"polygon_mm": [[x,y], ...]`（板中心为原点） |
+
+其余字段：安装孔（含非金属化）、禁布区、限高分区、`edge_constraints`（接口必须落在哪条板边）。
+
+**PCB writer（`agent/eda/pcb.py`）做什么**
+
+- ✅ 板框：所有板型统一离散成点列 → Edge.Cuts 闭合轮廓
+- ✅ 布局：**接口先占边**（硬约束，必须对准壳体开孔）→ 主控居中 → 其余从板中心向外找空位，
+  避让安装孔与禁布区
+- ✅ 安装孔、GND 整板铺铜（B.Cu）
+- ❌ **不布线**：信号线交给 KiCad 自带布线器 / Freerouting
+- ❌ 焊盘是参数化近似：布线前要替换官方封装（封装 descr 里写了原目标封装名）
+
+> ⚠️ **上一行已被第八轮部分取代**：`.epro`（嘉立创）链路的封装已改为**从立创官方库拉取真封装**
+> （实测 16/22 器件命中），只有库里搜不到或详情取不到的才退回本地近似图形。
+> **但 KiCad 链路（`board.kicad_pcb` / `schematic.kicad_sch`）仍未接库**，还是参数化符号 + 近似封装。
+
+**验收（本机 KiCad 10 真机）**：DRC 从 79 条违规降到 **4 条 warning + 18 条未布线**，
+**0 个硬 error**（courtyard 畸形、封装库缺失都已清零）。踩的坑：
+① 安装孔 courtyard 用单根线 → `malformed_courtyard`，必须闭合圆；
+② 丝印框画在器件外沿正好压焊盘 → 外移 0.6mm；③ courtyard 线宽规范是 0.05；
+④ 器件间距 1.0mm 不够，丝印互相压 → 2.2mm。
+
+**测试**：`scripts/test_pcb.py` **62 项全通过**（含 kicad-cli 真机 DRC 4 项）；
+其余回归 `test_kicad` 52 / `test_pipeline` 51 / `test_clarify_skeleton` 167 / `test_artifact_guard` 28 全绿。
+
+---
+
+## 上一改动：KiCad 工程真机验证通过 · 修 5 处格式/几何硬伤（2026-10-30 晚）
+
+第一版在 KiCad 10 里打不开（报 `应为 pin_names, pin_numbers, arc…实际 'symbol'`）。装了 KiCad 后用
+`kicad-cli` 做无头校验（加载 + 导出 SVG + ERC），把问题一个个钉死：
+
+| 问题 | 现象 | 修法 |
+|---|---|---|
+| `(id N)` 属性、`excludes_from_sim`、`(size 1.27)` 单值、裸 `hide` | 整个文件解析失败 | 按 KiCad 9/10 格式重写：property 用 `(hide yes)`、字号双值、`(pin_numbers (hide yes))`、`(power global)` |
+| **wire 塞了 3~4 个点** | 「加载原理图失败」，无行号 | KiCad 的 wire 只接受 2 个端点，折线必须拆成多根 |
+| **符号坐标 Y 未翻转** | 图能开但线全断（ERC 满地 pin_not_connected） | 库坐标 Y 向上、图纸 Y 向下，绝对坐标要 `cy - off_y` |
+| **引脚不在 1.27 栅格** | 线端点与引脚差 0.28mm，连不上 | IC 右列、连接器用统一栅距重算 |
+| **电源符号垂直插进引脚列** | GND 符号正好落在连接器第 5 脚上，把 D+ 短路到地 | 沿「引脚朝外」方向引出，PWR_FLAG 再往外一格 |
+| 电源网络无驱动源 | ERC `power_pin_not_driven` | 无 `power_out` 脚的网络才挂 `PWR_FLAG`；VOUT 判 `power_out` |
+
+同时产出 **`<name>.kicad_sym` + `sym-lib-table`**：内嵌符号只保证"打得开"，带上库表后 ERC 连
+「符号库未配置」的 25 条警告也没了。布局改成**按网络连通性 BFS 排序 + 动态列宽行高**，图不再大片留白。
+
+**验收**：`scripts/test_kicad.py` 52 项全通过，其中 3 项直接调用 `kicad-cli` 真机校验
+（能加载导出、ERC 0 error）；ERC 违规从 73 → **3**（只剩封装名在官方库里找不到，属待核对信息）。
+服务端不依赖 KiCad，`kicad-cli` 只在测试里可选调用（检测不到就 skip）。
+
+## 最新改动：硬件阶段能出真 KiCad 工程文件（2026-10-30，P0 落地）
+
+网表第一次不只是"一张 SVG 示意图"，而是能进 EDA 的真工程。新增 `agent/eda/` 包（纯离线、零第三方依赖）：
+
+- `eda/netlist.py` **网表规范化**（唯一事实源）：补 id/kind/封装、并查集聚合 net（支持 `U1.3V3 → 3V3`
+  这类裸网络端点）、电源/地识别、脏数据只记 warnings 不抛异常。
+- `eda/data/parts.json` **常用器件库 48 条**：封装名 + 典型限高 + 模块/IC/连接器的**真实引脚名**
+  （ESP32-C3-MINI-1 / AMS1117 / USB-C / BME280…）。LCSC 编号一律留空 —— 宁可空着也不编造料号。
+- `eda/symbols.py` + `eda/kicad.py` **KiCad 8 工程 writer**：生成 `.kicad_pro` + `.kicad_sch`。
+  符号**全部内嵌 lib_symbols**，不引用任何官方库，换台机器双击即开；电源/地画成标准电源符号并就近
+  接线，悬空脚自动标 `no_connect`（ERC 不刷屏）。
+- 新工具 `emit_kicad_project`：读同一份 `netlist.json` → 写 `30_hardware/schematic.kicad_{pro,sch}`，
+  已注册进 `ALL_TOOLS` 并写进 hardware-engineer 的必做清单（网表改了必须重新导出，保证
+  netlist / svg / kicad 三者一致）；`30_hardware` 阶段契约新增 `schematic.kicad_sch`。
+- 自测 `scripts/test_kicad.py`：47 项全通过（结构自检 + 脏数据不崩 + 器件库完整性）。
+  样例产物：`workspace/eda-preview/`（不入库）。
+
+## 最新改动：硬件 EDA 技术路径选型（2026-10-30，决策文档，未改代码）
+
+围绕「要不要接 easyeda-copilot、PCB 怎么做」做了一轮调研与选型，结论落在
+`docs/easyeda-integration-assessment.md`（第十节）。
+
+- **easyeda-copilot 是遥控器不是库**：`mcp/src/` 内 0 个 HTTP 调用，所有能力走 WebSocket 打本机
+  EasyEDA 客户端，不写任何文件 → 不做主链路，只在「探测到客户端在线」时当增强（真 DRC / 真布线）。
+- **不装 EasyEDA 也能出工程文件**：EasyEDA Pro 的 `.epro` 是公开格式（zip + JSON Lines，官方 V3 规范
+  2025102101）；KiCad 官方文档亦写明其结构，KiCad 8+ 可导入 `.epro`。
+- **器件库不能靠抓**：`easyeda.com/api/products/*` 现 403/404、LCSC 接口 SSL EOF → 自建常用器件库，
+  或直接用 KiCad 官方库仓库（纯文本、CC 授权，无需安装 KiCad）。
+- **推荐路径**：结构化网表做唯一事实源 → **KiCad 文本工程为主输出**（容错高 / 器件库现成 /
+  `kicad-cli` 可无头出 Gerber·BOM·坐标 / 且能被 EasyEDA Pro 导入）→ `.epro` 为副输出 →
+  自研渲染器进网页产物面板（可交互原理图 + PCB 预览 + BOM + 一键下载 zip）。
+- 节奏：P0 网表+器件库+原理图 writer+渲染 → P1 PCB 布局/铺铜 → P2 `.epro`+Gerber → P3 EasyEDA 增强通道。
 
 ## 最新改动：交付完成弹窗（带产品渲染图）（2026-10-15）
 

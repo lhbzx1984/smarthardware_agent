@@ -157,7 +157,7 @@ def test_budget_weighting() -> None:
     r2 = _fresh_run()
     hit2 = None
     try:
-        for i in range(config.TOOL_BUDGET + 2):
+        for i in range(int(r2.tool_budget) + 2):   # 预算按范式档位走，不是 config.TOOL_BUDGET
             r2.push({"type": "tool_start", "cid": f"c{i}", "name": "build_structure", "args": f"script{i}"})
     except guards.RunAborted as e:
         hit2 = e

@@ -169,7 +169,15 @@ check("explore 档 ≥ review", paradigms.EXPLORE.tool_budget >= paradigms.REVIE
 
 print("\n【8】主智能体拿不到执行工具（它不该自己下场建模）")
 main_names = {t.name for t in main_agent.MAIN_TOOLS}
-check("主智能体只有调度工具", main_names == {"stage_gate", "confirm_with_user"}, str(main_names))
+# stage_gate 早已从主智能体拿掉（门禁改由子智能体在自己第一步自查），
+# 所以这里只断言"没有任何执行类工具"，而不是死记一个工具名单
+_EXEC_TOOLS = {
+    "build_structure", "text_to_cad", "render_schematic", "emit_kicad_project",
+    "generate_product_image", "render_product_views", "build_bom", "check_circuit",
+    "check_arduino", "save_artifact", "search_cirkit_docs",
+}
+check("主智能体拿不到执行类工具", not (main_names & _EXEC_TOOLS), str(sorted(main_names & _EXEC_TOOLS)))
+check("主智能体只剩调度工具", main_names <= {"stage_gate", "confirm_with_user"}, str(main_names))
 for bad in ("generate_product_image", "text_to_cad", "build_structure", "save_artifact", "render_schematic"):
     check(f"主智能体没有 {bad}", bad not in main_names)
 all_names = {t.name for t in tools.ALL_TOOLS}
@@ -187,6 +195,55 @@ from subagents import COMMON_RULES  # noqa: E402
 
 check("0b 条已写入", "已完成并经用户确认" in COMMON_RULES, COMMON_RULES[:80])
 check("提示别重复落盘", "反复 save_artifact" in COMMON_RULES)
+
+print("\n【11】出图落盘归位 + 「补齐新产物」不被闸门误拦")
+# 事故（用户实跑日志）：模型传裸文件名 render-02.png → 图掉进工作区根，前端归到「其它文件」；
+# 同时出完第一张图就把阶段置成 done，第二张图被「请先请用户确认」拦死。
+check("裸 render 文件名归位到外观阶段",
+      tools._in_stage_dir("render-02.png", "render") == "10_appearance/render-02.png",
+      tools._in_stage_dir("render-02.png", "render"))
+check("裸 exploded 文件名归位到结构阶段",
+      tools._in_stage_dir("exploded-01.png", "exploded") == "20_structure/exploded-01.png",
+      tools._in_stage_dir("exploded-01.png", "exploded"))
+check("带目录的文件名保持原样",
+      tools._in_stage_dir("10_appearance/render-03.png", "render") == "10_appearance/render-03.png")
+
+run2 = Path(tempfile.mkdtemp(prefix="stage_once2_"))
+stagestate.mark_started(run2, "10_appearance")
+stagestate.mark_done(run2, "10_appearance")   # 模拟：第一张图落盘后阶段被置 done
+g_new = stagestate.guard(run2, "10_appearance", "generate_product_image",
+                         ["10_appearance/render-02.png"])
+check("done + 目标文件不存在 → 放行（补第二张图不算重做）", g_new == "", g_new[:80])
+(run2 / "10_appearance").mkdir(parents=True, exist_ok=True)
+(run2 / "10_appearance" / "render-02.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+g_old = stagestate.guard(run2, "10_appearance", "generate_product_image",
+                         ["10_appearance/render-02.png"])
+check("done + 目标文件已存在 → 拦下", g_old.startswith("⛔") and "confirm_with_user" in g_old, g_old[:80])
+stagestate.mark_confirmed(run2, "10_appearance", 1)
+g_cf = stagestate.guard(run2, "10_appearance", "generate_product_image",
+                        ["10_appearance/render-09.png"])
+check("confirmed + 新文件 → 仍拦（已确认的一版不该再加图）", g_cf.startswith("⛔"), g_cf[:80])
+
+print("\n【12】出一张图不锁死阶段（契约齐了才 done）")
+run3 = Path(tempfile.mkdtemp(prefix="stage_once3_"))
+(run3 / "10_appearance").mkdir(parents=True, exist_ok=True)
+(run3 / "10_appearance" / "render-01.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+tools.bind_context(run3, lambda ev: None, {})
+tools._sync_stage("10_appearance/render-01.png")
+s3 = stagestate.load(run3, "10_appearance")["status"]
+check("只有渲染图 → 仍是 working，后续图能接着出", s3 == stagestate.WORKING, s3)
+for f in ("appearance.md", "orthographic.svg"):
+    (run3 / "10_appearance" / f).write_text("x", encoding="utf-8")
+tools._sync_stage("10_appearance/appearance.md")
+s3b = stagestate.load(run3, "10_appearance")["status"]
+check("契约产物齐全 → 置 done", s3b == stagestate.DONE, s3b)
+tools.bind_context(run, lambda ev: None, {})
+
+print("\n【13】语言硬约束（实测思考与汇报漂移到波斯语）")
+check("主提示词要求思考文本也用中文", "深度思考文本" in main_agent.MAIN_PROMPT)
+check("主提示词点名禁止语种漂移", "波斯语" in main_agent.MAIN_PROMPT)
+check("子智能体准则要求中文输出", "简体中文" in COMMON_RULES)
+check("子智能体点名思考文本", "深度思考文本" in COMMON_RULES)
 
 print("\n" + "=" * 56)
 if FAILED:

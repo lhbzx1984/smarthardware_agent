@@ -690,7 +690,8 @@ export default function Home() {
   const isSvg = activeFile?.endsWith(".svg");
   const isMd = activeFile?.endsWith(".md");
   const isImg = !!activeFile && /\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(activeFile);
-  const isBinary = !!activeFile && /\.(step|stp|stl|3mf|zip)$/i.test(activeFile);
+  // .epro 是 zip 容器（嘉立创工程），当文本渲染会是一屏乱码
+  const isBinary = !!activeFile && /\.(step|stp|stl|3mf|zip|epro)$/i.test(activeFile);
   // Markdown 里的图片常写成相对当前文档的路径，按所在目录兜底查找
   const docBase = activeFile ? activeFile.slice(0, Math.max(0, activeFile.lastIndexOf("/"))) : "";
 

@@ -1,0 +1,23 @@
+[Unit]
+Description=Product Design Agent Worker (FastAPI + SSE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__PDA_USER__
+WorkingDirectory=__PDA_DIR__/agent
+# .env 就是 KEY=VALUE 格式，可直接当 EnvironmentFile；
+# 注意 systemd 里 Environment= 会覆盖 EnvironmentFile，所以监听地址只写在 .env 里
+EnvironmentFile=__PDA_DIR__/.env
+ExecStart=__PDA_DIR__/.venv/bin/python server.py
+Restart=always
+RestartSec=5
+# 单进程：store 用模块级 sqlite 单例连接，起多实例会互相抢库
+KillSignal=SIGINT
+TimeoutStopSec=30
+StandardOutput=append:/var/log/pda-worker.log
+StandardError=append:/var/log/pda-worker.log
+
+[Install]
+WantedBy=multi-user.target

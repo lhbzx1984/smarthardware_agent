@@ -231,7 +231,7 @@ import tools  # noqa: E402
 
 names = [getattr(t, "name", "") for t in tools.ALL_TOOLS]
 check("confirm_with_user 已注册", "confirm_with_user" in names, str(names))
-check("工具数量 = 12", len(tools.ALL_TOOLS) == 12, str(len(tools.ALL_TOOLS)))
+check("工具数量 ≥ 12（工具集随能力扩展增长）", len(tools.ALL_TOOLS) >= 12, str(len(tools.ALL_TOOLS)))
 check("阶段别名能解析", tools._stage_id("结构设计") == "20_structure", tools._stage_id("结构设计"))
 check("中文标签能解析", tools._stage_id("外观") == "10_appearance", tools._stage_id("外观"))
 check("ID 原样返回", tools._stage_id("20_structure") == "20_structure", "")

@@ -123,6 +123,7 @@ class Run:
         self.goal_at = 0.0
         # 磁盘扫描节流：模型常绕过 save_artifact 直接 write_file，只认事件会让判据永远不齐
         self._last_scan = 0.0
+        self._scanning = False       # 扫描补发事件的递归闸（见 _maybe_scan_goal）
         # 内存事件列表有上限；被裁掉的条数要记着，否则 SSE 游标会错位（表现为重复推送/丢事件）
         self.events_base = 0
         # thinking/token 聚合缓冲：按 agent+type 分桶，攒够窗口再写一条进库
@@ -417,6 +418,8 @@ class Run:
         全齐，事件里却只有 1 个 artifact —— 于是「六阶段齐全」的判据永远判不出来，
         规划显示 6/6 完成、任务却一直转，最后被用户手动掐掉。
         """
+        if self._scanning:          # push 里回调本函数，补发事件时别再递归一层
+            return
         now = time.time()
         if now - self._last_scan < config.DISK_SCAN_SECONDS:
             return
@@ -434,6 +437,19 @@ class Run:
             self.artifacts |= fresh
             self.last_progress = now
             self.progress_marks += len(fresh)
+            # 补发登记：磁盘上有了、事件流里没有的文件，前端实时产物面板一样看不见。
+            # 上一轮实测就是这样误判成「固件阶段卡住 35 分钟没产出」——文件其实早就
+            # 写好了，只是 write_file 不发 artifact 事件，直到刷新扫磁盘才冒出来。
+            self._scanning = True
+            try:
+                for rel in sorted(fresh):
+                    try:
+                        size = (self.dir / rel).stat().st_size
+                    except OSError:
+                        size = 0
+                    self.push({"type": "artifact", "path": rel, "size": size, "preview": "", "source": "disk"})
+            finally:
+                self._scanning = False
         self._check_goal()
 
     def _agg(self, etype: str, ev: dict[str, Any]) -> None:
@@ -1847,4 +1863,5 @@ if __name__ == "__main__":
     print(f"[worker] mode={'demo' if (config.MOCK or _d['has_key'] == '0') else 'live'} "
           f"provider={_d['provider']} model={config.MODEL} port={config.PORT}")
     print(f"[worker] db={_st['db']} runs={_st['runs']} events={_st['events']} artifacts={_st['artifacts']}")
-    uvicorn.run(app, host="127.0.0.1", port=config.PORT, log_level="warning")
+    # host 来自 config.HOST（AGENT_HOST）：容器/服务器部署时必须为 0.0.0.0
+    uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning")
