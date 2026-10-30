@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能产品设计智能体 · 设计框架与技术栈报告</title>
+<style>
+:root{
+  --bg:#f6f7f9; --bg-soft:#eceef2; --surface:#ffffff; --surface-2:#fafbfc;
+  --text:#16191e; --text-dim:#5b6470; --text-faint:#8a929e;
+  --border:#e2e5ea; --border-strong:#cdd2da;
+  --accent:#3b62f6; --accent-soft:#e8edff;
+  --accent2:#0f9b8e; --accent2-soft:#e2f6f3;
+  --warn:#b7791f; --warn-soft:#fdf3dc;
+  --danger:#c0392b; --danger-soft:#fbe9e7;
+  --shadow:0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.06);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+[data-theme="dark"]{
+  --bg:#0e1116; --bg-soft:#141922; --surface:#171b23; --surface-2:#1c212b;
+  --text:#e7eaf0; --text-dim:#a4adba; --text-faint:#737d8b;
+  --border:#262c37; --border-strong:#333b48;
+  --accent:#7aa2ff; --accent-soft:#1c2540;
+  --accent2:#3fc9b9; --accent2-soft:#123430;
+  --warn:#e0b341; --warn-soft:#332a12;
+  --danger:#f0796a; --danger-soft:#3a1e1a;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-size:15px; line-height:1.75; -webkit-font-smoothing:antialiased;
+  transition:background .25s ease,color .25s ease;
+}
+.wrap{max-width:1140px;margin:0 auto;padding:0 28px 96px}
+
+/* ---------- header ---------- */
+header{
+  position:sticky; top:0; z-index:50; backdrop-filter:blur(14px) saturate(180%);
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  border-bottom:1px solid var(--border);
+}
+.hbar{max-width:1140px;margin:0 auto;padding:12px 28px;display:flex;align-items:center;gap:16px}
+.brand{font-weight:700;letter-spacing:-.01em;font-size:15px}
+.brand span{color:var(--text-faint);font-weight:500;margin-left:8px;font-size:13px}
+.spacer{flex:1}
+.toggle{
+  display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border-strong);
+  background:var(--surface);color:var(--text-dim);border-radius:999px;padding:6px 13px;
+  cursor:pointer;font-size:13px;font-family:inherit;transition:.2s;
+}
+.toggle:hover{color:var(--text);border-color:var(--accent);transform:translateY(-1px)}
+
+/* ---------- hero ---------- */
+.hero{padding:64px 0 40px}
+.kicker{
+  display:inline-block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:5px 12px;font-weight:600;
+}
+h1{font-size:38px;line-height:1.25;margin:18px 0 12px;letter-spacing:-.025em;font-weight:750}
+.lede{font-size:17px;color:var(--text-dim);max-width:78ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{
+  font-size:12.5px;border:1px solid var(--border);background:var(--surface);
+  color:var(--text-dim);border-radius:8px;padding:4px 10px;font-family:var(--mono);
+}
+
+/* ---------- layout ---------- */
+.grid{display:grid;grid-template-columns:212px 1fr;gap:38px;align-items:start;margin-top:8px}
+@media(max-width:900px){.grid{grid-template-columns:1fr;gap:0}}
+nav.toc{position:sticky;top:74px;font-size:13.5px}
+@media(max-width:900px){nav.toc{display:none}}
+nav.toc a{
+  display:block;color:var(--text-dim);text-decoration:none;padding:5px 12px;
+  border-left:2px solid var(--border);transition:.18s;
+}
+nav.toc a:hover{color:var(--text);border-left-color:var(--accent);background:var(--surface)}
+nav.toc b{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--text-faint);margin:0 0 10px 12px}
+
+section{padding-top:34px;margin-bottom:26px}
+h2{
+  font-size:23px;letter-spacing:-.015em;margin:0 0 6px;font-weight:700;
+  display:flex;align-items:baseline;gap:10px;
+}
+h2 em{
+  font-style:normal;font-size:12px;color:var(--text-faint);font-family:var(--mono);font-weight:500;
+}
+h3{font-size:16px;margin:26px 0 10px;font-weight:650;letter-spacing:-.01em}
+p{margin:10px 0}
+.sub{color:var(--text-dim);font-size:14px;margin:0 0 18px}
+code{font-family:var(--mono);font-size:.88em;background:var(--bg-soft);
+  border:1px solid var(--border);border-radius:5px;padding:1px 5px;color:var(--text)}
+a{color:var(--accent)}
+
+/* ---------- cards ---------- */
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:18px 20px;box-shadow:var(--shadow);
+}
+.cards{display:grid;gap:14px;margin-top:16px}
+.c2{grid-template-columns:repeat(2,1fr)}
+.c3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:820px){.c2,.c3{grid-template-columns:1fr}}
+.card h4{margin:0 0 6px;font-size:14.5px;font-weight:680;display:flex;align-items:center;gap:8px}
+.card p{margin:0;font-size:13.5px;color:var(--text-dim)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}
+.dot.t{background:var(--accent2)} .dot.w{background:var(--warn)} .dot.d{background:var(--danger)}
+
+/* ---------- table ---------- */
+.tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface);margin-top:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:var(--surface-2);font-weight:650;font-size:12.5px;color:var(--text-dim);
+   letter-spacing:.02em;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.mono{font-family:var(--mono);font-size:12.5px;color:var(--text-dim)}
+tbody tr:hover{background:var(--surface-2)}
+
+/* ---------- tags ---------- */
+.tag{
+  display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:6px;margin:2px 3px 2px 0;
+  background:var(--accent-soft);color:var(--accent);font-family:var(--mono);
+}
+.tag.g{background:var(--accent2-soft);color:var(--accent2)}
+.tag.y{background:var(--warn-soft);color:var(--warn)}
+.tag.r{background:var(--danger-soft);color:var(--danger)}
+.tag.n{background:var(--bg-soft);color:var(--text-dim)}
+
+/* ---------- callout ---------- */
+.note{
+  border-left:3px solid var(--accent);background:var(--accent-soft);
+  border-radius:0 10px 10px 0;padding:12px 16px;margin:16px 0;font-size:13.5px;color:var(--text)
+}
+.note.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.note strong{font-weight:680}
+
+/* ---------- diagram ---------- */
+.figure{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:18px;margin:18px 0;box-shadow:var(--shadow);overflow-x:auto}
+.figure svg{display:block;width:100%;height:auto;min-width:640px}
+.figcap{font-size:12.5px;color:var(--text-faint);margin-top:10px;text-align:center}
+
+ul.tight{margin:8px 0;padding-left:20px}
+ul.tight li{margin:5px 0;font-size:13.5px;color:var(--text-dim)}
+ul.tight li b{color:var(--text);font-weight:620}
+
+hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+footer{border-top:1px solid var(--border);margin-top:50px;padding-top:22px;
+  color:var(--text-faint);font-size:12.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+
+@media print{
+  header,nav.toc,.toggle{display:none}
+  body{background:#fff;color:#000}
+  .card,.figure,.tablewrap{box-shadow:none;break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hbar">
+    <div class="brand">智能产品设计智能体 <span>设计框架 &amp; 技术栈报告</span></div>
+    <div class="spacer"></div>
+    <button class="toggle" id="tt" onclick="toggleTheme()">
+      <span id="ticon">◐</span><span id="ttext">深色</span>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="kicker">Architecture &amp; Tech Stack</div>
+    <h1>一句话需求 → 六阶段自主设计流水线 → 可交付的工程产物</h1>
+    <p class="lede">
+      本项目是一套面向智能硬件的<strong>多智能体设计流水线</strong>：用户输入一句产品需求后，
+      系统先做需求补全问卷，再由主智能体按<strong>强相关的串行 DAG</strong>依次派单给六个专业子智能体，
+      产出外观渲染图、结构 STEP/STL、电路原理图/PCB/Gerber、固件代码与交叉评审报告，
+      全程通过 SSE 向前端实时回传事件流，产物落盘为可直接使用的工程文件。
+    </p>
+    <div class="meta">
+      <span class="chip">deepagents 0.7 / LangGraph 1.x</span>
+      <span class="chip">FastAPI + SSE :8001</span>
+      <span class="chip">Next.js 15 · React 19 · Tailwind v4</span>
+      <span class="chip">build123d / E2B 沙箱</span>
+      <span class="chip">KiCad 10 + 嘉立创 EDA</span>
+      <span class="chip">SQLite（零依赖）</span>
+      <span class="chip">Python 3.13</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <nav class="toc">
+      <b>目录</b>
+      <a href="#s1">1 · 系统定位</a>
+      <a href="#s2">2 · 分层架构</a>
+      <a href="#s3">3 · 六阶段流水线</a>
+      <a href="#s4">4 · 技术栈全景</a>
+      <a href="#s5">5 · 智能体编排</a>
+      <a href="#s6">6 · 工具层</a>
+      <a href="#s7">7 · 护栏与容错</a>
+      <a href="#s8">8 · 数据流与存储</a>
+      <a href="#s9">9 · EDA 领域内核</a>
+      <a href="#s10">10 · 部署架构</a>
+      <a href="#s11">11 · 质量保障</a>
+      <a href="#s12">12 · 已知边界</a>
+    </nav>
+
+    <main>
+
+<!-- ============ 1 ============ -->
+<section id="s1">
+  <h2>1 · 系统定位 <em>what &amp; why</em></h2>
+  <p class="sub">一句话需求到工程产物的端到端自动化，中间每一步都有可验证的落盘物。</p>
+
+  <div class="cards c3">
+    <div class="card">
+      <h4><i class="dot"></i>输入端：需求补全</h4>
+      <p>「补全需求」返回 6–10 项待确认清单（场景/指标/尺寸/供电/主控/成本…），带充分度评分与「为什么问这个」。模型不可用时自动降级为内置通用模板，流程永不断。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot t"></i>中段：六阶段流水线</h4>
+      <p>需求 → 外观 → 结构 → 硬件 → 固件 → 评审。每阶段声明 <code>depends</code>（上游）与 <code>requires</code>（开工前磁盘上必须已存在的产物），门禁由磁盘产物反推，<strong>模型嘴上说没说不算数</strong>。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot w"></i>输出端：可交付产物</h4>
+      <p>渲染图/三视图、STEP + STL + 爆炸图、原理图 + PCB + Gerber + BOM、<code>.ino</code> 固件、一致性评审。EDA 产物可直接发板厂，<code>.epro</code> 双击即开。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>设计取向：</strong>整条链路的判据一律<strong>以磁盘为准</strong>。阶段是否完成看契约产物集是否齐全；
+    运行是否还活着看 <code>updated_at</code> 是否推进；文件清单扫目录而不是读事件流
+    —— 子智能体常绕过 <code>save_artifact</code> 直接写文件，事件流会漏掉一半。
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="s2">
+  <h2>2 · 分层架构 <em>layers</em></h2>
+  <p class="sub">七个层次，层间依赖单向向下；能力层与领域层是本项目真正的资产。</p>
+
+  <div class="figure">
+    <svg viewBox="0 0 900 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,PingFang SC,sans-serif">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3.2" orient="auto">
+          <path d="M0,0 L7,3.2 L0,6.4 z" fill="#8a929e"/>
+        </marker>
+      </defs>
+
+      <!-- L1 -->
+      <rect x="60" y="14" width="780" height="52" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+      <text x="80" y="36" font-size="13" font-weight="700" fill="var(--text)">交互层 · Next.js 15 App Router + React 19 + Tailwind v4</text>
+      <text x="80" y="55" font-size="11.5" fill="var(--text-dim)">需求补全表单 · 实时事件流 · 产物树 · 模型设置 · 人机确认闸门 · 明暗主题（:3000）</text>
+
+      <!-- L2 -->
+      <rect x="60" y="84" width="780" height="52" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+      <text x="80" y="106" font-size="13" font-weight="700" fill="var(--text)">服务层 · FastAPI + SSE</text>
+      <text x="80" y="125" font-size="11.5" fill="var(--text-dim)">/api/run · /api/stream · /api/runs · /api/review · 自动续跑 · 超时/预算/步数中止（:8001，单进程）</text>
+
+      <!-- L3 -->
+      <rect x="60" y="154" width="780" height="60" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="80" y="176" font-size="13" font-weight="700" fill="var(--text)">编排层 · 主智能体（deepagents 0.7 / LangGraph 运行时）</text>
+      <text x="80" y="194" font-size="11.5" fill="var(--text-dim)">串行派单 · 补派同角色 · 阶段门禁 · 四档范式（ReAct / Plan-Execute / Reflexion / ToT）</text>
+      <text x="80" y="209" font-size="11.5" fill="var(--text-dim)">角色子智能体 ×7：需求 · 外观 · 结构 · 硬件 · 固件 · 评审 · 兜底（工具按角色裁剪）</text>
+
+      <!-- L4 -->
+      <rect x="60" y="232" width="380" height="70" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+      <text x="80" y="254" font-size="13" font-weight="700" fill="var(--text)">能力层 · 16 个工具</text>
+      <text x="80" y="272" font-size="11.5" fill="var(--text-dim)">出图 · 建模 · 网表校验 · BOM · 原理图 ·</text>
+      <text x="80" y="288" font-size="11.5" fill="var(--text-dim)">KiCad · Gerber · EPRO · 固件检查 · 闸门</text>
+
+      <rect x="460" y="232" width="380" height="70" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+      <text x="480" y="254" font-size="13" font-weight="700" fill="var(--text)">领域层 · agent/eda（纯 Python，零第三方依赖）</text>
+      <text x="480" y="272" font-size="11.5" fill="var(--text-dim)">netlist · board · parts · symbols · lib(立创) ·</text>
+      <text x="480" y="288" font-size="11.5" fill="var(--text-dim)">sch · kicad · pcb · gerber · easyeda · preview</text>
+
+      <!-- L5 -->
+      <rect x="60" y="320" width="780" height="60" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+      <text x="80" y="342" font-size="13" font-weight="700" fill="var(--text)">外部依赖（全部可替换 / 可降级）</text>
+      <text x="80" y="360" font-size="11.5" fill="var(--text-dim)">LLM 网关（Agnes / 硅基流动 / DeepSeek / 智谱 / 百炼 / Moonshot / OpenAI / 自定义）</text>
+      <text x="80" y="375" font-size="11.5" fill="var(--text-dim)">Agnes 图像网关 · E2B 云端建模沙箱 · 立创官方元件库 API · KiCad 10 CLI（Gerber / ERC / 回读校验）</text>
+
+      <!-- L6 -->
+      <rect x="60" y="398" width="780" height="52" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+      <text x="80" y="420" font-size="13" font-weight="700" fill="var(--text)">存储层</text>
+      <text x="80" y="439" font-size="11.5" fill="var(--text-dim)">data/agent.db（SQLite · runs / events / files 三表 · 事件批量刷盘） + workspace/&lt;run&gt;/（产物文件系统，权威来源）</text>
+
+      <line x1="450" y1="66" x2="450" y2="84" stroke="#8a929e" marker-end="url(#ar)"/>
+      <line x1="450" y1="136" x2="450" y2="154" stroke="#8a929e" marker-end="url(#ar)"/>
+      <line x1="330" y1="214" x2="250" y2="232" stroke="#8a929e" marker-end="url(#ar)"/>
+      <line x1="570" y1="214" x2="650" y2="232" stroke="#8a929e" marker-end="url(#ar)"/>
+      <line x1="450" y1="302" x2="450" y2="320" stroke="#8a929e" marker-end="url(#ar)"/>
+      <line x1="450" y1="380" x2="450" y2="398" stroke="#8a929e" marker-end="url(#ar)"/>
+    </svg>
+    <div class="figcap">图 1 · 分层架构：能力层（工具）与领域层（EDA 内核）是沉淀下来的核心资产，外部依赖全部可替换</div>
+  </div>
+
+  <h3>关键源码模块</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>模块</th><th>职责</th><th>备注</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">agent/server.py</td><td>HTTP + SSE 服务、运行生命周期、自动续跑、文件索引</td><td>单进程部署（SQLite 模块级单例）</td></tr>
+        <tr><td class="mono">agent/main_agent.py</td><td>主智能体：提示词、串行派单约束、事件流消费</td><td>含 <code>GraphRecursionError</code> 优雅收口</td></tr>
+        <tr><td class="mono">agent/subagents.py</td><td>7 个角色 spec + 工具裁剪 + 中文硬约束</td><td>显式覆盖内置 <code>general-purpose</code></td></tr>
+        <tr><td class="mono">agent/tools.py</td><td>16 个工具实现、阶段锁、产物归位、并发导入锁</td><td>worker 下 <code>tools</code> 是顶层模块，禁用相对导入</td></tr>
+        <tr><td class="mono">agent/stages.py · pipeline.py</td><td>六阶段定义与门禁（与前端 <code>plan.ts</code> 同源）</td><td>正则判据两边直译，改一处要同步另一处</td></tr>
+        <tr><td class="mono">agent/stagestate.py · guards.py</td><td>阶段状态机 + 中止语义家族</td><td>护栏带熔断，禁止「只拦不给路」</td></tr>
+        <tr><td class="mono">agent/paradigms.py</td><td>四档推理范式与预算</td><td>预算可 env 覆盖</td></tr>
+        <tr><td class="mono">agent/cad.py</td><td>CAD 运行时：本地 build123d / E2B 云端沙箱</td><td>静态检查 + 几何自检 + 崩溃提示映射</td></tr>
+        <tr><td class="mono">agent/eda/*.py</td><td>原理图 / PCB / Gerber / EPRO 生成与预览</td><td>纯 Python，零第三方依赖</td></tr>
+        <tr><td class="mono">agent/quotaguard.py</td><td>429 配额守卫：预防式降速 + 自动关深度思考</td><td>把「撞了再退避」改成「快撞了先慢」</td></tr>
+        <tr><td class="mono">agent/knowledge.py</td><td>Cirkit Designer 文档 BM25 检索（23 页）</td><td>零依赖，不引向量库</td></tr>
+        <tr><td class="mono">agent/store.py</td><td>SQLite 存储 + schema 迁移 + 孤儿回收</td><td>stdlib sqlite3</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="s3">
+  <h2>3 · 六阶段流水线 <em>DAG</em></h2>
+  <p class="sub">智能硬件设计是强相关的串行链：PCB 装进壳体内腔 → 板型反过来决定封装与层数 → 器件决定固件驱动。</p>
+
+  <div class="figure">
+    <svg viewBox="0 0 900 250" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,PingFang SC,sans-serif">
+      <defs>
+        <marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="3.2" orient="auto">
+          <path d="M0,0 L7,3.2 L0,6.4 z" fill="#8a929e"/>
+        </marker>
+      </defs>
+      <g font-size="12" font-weight="600">
+        <rect x="14" y="86" width="126" height="62" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="77" y="112" text-anchor="middle" fill="var(--text)">00 需求定义</text>
+        <text x="77" y="131" text-anchor="middle" font-size="10.5" font-weight="400" fill="var(--text-dim)">PRD / 硬约束</text>
+
+        <rect x="163" y="86" width="126" height="62" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="226" y="112" text-anchor="middle" fill="var(--text)">10 外观设计</text>
+        <text x="226" y="131" text-anchor="middle" font-size="10.5" font-weight="400" fill="var(--text-dim)">渲染图 / 三视图</text>
+
+        <rect x="312" y="86" width="126" height="62" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="375" y="112" text-anchor="middle" fill="var(--text)">20 结构设计</text>
+        <text x="375" y="131" text-anchor="middle" font-size="10.5" font-weight="400" fill="var(--text-dim)">STEP / board.json</text>
+
+        <rect x="461" y="86" width="126" height="62" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="524" y="112" text-anchor="middle" fill="var(--text)">30 硬件设计</text>
+        <text x="524" y="131" text-anchor="middle" font-size="10.5" font-weight="400" fill="var(--text-dim)">原理图 / PCB / BOM</text>
+
+        <rect x="610" y="86" width="126" height="62" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="673" y="112" text-anchor="middle" fill="var(--text)">40 固件仿真</text>
+        <text x="673" y="131" text-anchor="middle" font-size="10.5" font-weight="400" fill="var(--text-dim)">Arduino / 状态机</text>
+
+        <rect x="759" y="86" width="126" height="62" rx="10" fill="var(--accent2-soft)" stroke="var(--accent2)"/>
+        <text x="822" y="112" text-anchor="middle" fill="var(--text)">90 交叉评审</text>
+        <text x="822" y="131" text-anchor="middle" font-size="10.5" font-weight="400" fill="var(--text-dim)">一致性检查</text>
+      </g>
+      <g stroke="#8a929e" marker-end="url(#ar2)">
+        <line x1="140" y1="117" x2="163" y2="117"/>
+        <line x1="289" y1="117" x2="312" y2="117"/>
+        <line x1="438" y1="117" x2="461" y2="117"/>
+        <line x1="587" y1="117" x2="610" y2="117"/>
+        <line x1="736" y1="117" x2="759" y2="117"/>
+      </g>
+      <g font-size="10.5" fill="var(--text-faint)" font-family="ui-monospace,monospace">
+        <text x="77" y="176" text-anchor="middle">尺寸·供电·成本·环境</text>
+        <text x="226" y="176" text-anchor="middle">外形·分模线·开孔</text>
+        <text x="375" y="176" text-anchor="middle">板框·安装孔·限高</text>
+        <text x="524" y="176" text-anchor="middle">引脚·电源树·BOM</text>
+        <text x="673" y="176" text-anchor="middle">驱动·时序·验收</text>
+        <text x="822" y="176" text-anchor="middle">问题清单·返工</text>
+      </g>
+      <text x="450" y="206" text-anchor="middle" font-size="11" fill="var(--text-faint)">每阶段的 pass_down（向下游传递的硬约束）／ requires（开工前磁盘上必须已存在的产物）</text>
+      <text x="450" y="228" text-anchor="middle" font-size="11" fill="var(--text-faint)">状态机：PENDING → WORKING → DONE → CONFIRMED → REVISED　｜　产物齐全才置 DONE，不是「第一份落盘就锁阶段」</text>
+    </svg>
+    <div class="figcap">图 2 · 六阶段串行 DAG 与向下游传递的硬约束</div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>阶段</th><th>开工前置（requires）</th><th>契约产物（节选）</th><th>向下游传递</th></tr></thead>
+      <tbody>
+        <tr><td><b>00_prd</b><br><span class="tag n">需求定义</span></td><td class="mono">—</td><td class="mono">prd.md</td><td>尺寸 / 供电 / 成本 / 环境等取值边界</td></tr>
+        <tr><td><b>10_appearance</b><br><span class="tag n">外观设计</span></td><td class="mono">00_prd/*.md</td><td class="mono">appearance.md · orthographic.svg · render-01.png</td><td>外形尺寸、分模线、开孔位置（建模唯一形状来源）</td></tr>
+        <tr><td><b>20_structure</b><br><span class="tag n">结构设计</span></td><td class="mono">10_appearance/*.{md,png,svg,json}</td><td class="mono">structure.md · model.py · consistency.md · exploded.svg · board.json</td><td>板框 / 安装孔 / 禁布区 / 限高 / 接口靠边</td></tr>
+        <tr><td><b>30_hardware</b><br><span class="tag n">硬件设计</span></td><td class="mono">20_structure/{structure.md,*.step,*.stl}</td><td class="mono">netlist.json · schematic.kicad_sch · board.kicad_pcb · gerber.zip · board.epro · bom.csv</td><td>引脚分配、电源树、BOM</td></tr>
+        <tr><td><b>40_firmware</b><br><span class="tag n">固件仿真</span></td><td class="mono">30_hardware 产物</td><td class="mono">firmware.ino · sim-steps.md</td><td>驱动清单与验收步骤</td></tr>
+        <tr><td><b>90_review</b><br><span class="tag n">交叉评审</span></td><td class="mono">四套方案齐备</td><td class="mono">review.md（问题清单 + 修复建议）</td><td>返工指令</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warn">
+    <strong>判据细节：</strong>阶段完成看的是「契约产物集齐全」，不是「任一产物出现」。
+    出图类工具是多产物工具，曾出现「第一张图落盘就置 DONE，第二张图被自己的闸门拦死」；
+    现在对多产物工具做了豁免（DONE + 目标文件不存在 = 补齐，放行；已存在才拦）。
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="s4">
+  <h2>4 · 技术栈全景 <em>stack</em></h2>
+  <p class="sub">按层列出实际选型与版本约束，标注了「为什么选它」与踩过的坑。</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>层</th><th>选型</th><th>版本 / 约束</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3"><b>智能体内核</b></td>
+            <td class="mono">deepagents 0.7.23</td><td class="mono">==0.7.23（锁死）</td>
+            <td>与 langgraph 1.x 配套，跨大版本升级前先跑 <code>scripts/smoke.py</code></td></tr>
+        <tr><td class="mono">LangGraph + LangChain</td><td class="mono">&gt;=1.0,&lt;2.0</td><td>图运行时；<strong>子图与父图共享 step 计数</strong>，故步数预算按档位给足</td></tr>
+        <tr><td class="mono">langchain-openai</td><td class="mono">&gt;=1.0</td><td>统一走 OpenAI 兼容协议，换模型只改 <code>.env</code></td></tr>
+
+        <tr><td rowspan="2"><b>服务层</b></td>
+            <td class="mono">FastAPI + Uvicorn</td><td class="mono">&gt;=0.115 / &gt;=0.30</td><td>REST + SSE；<code>AGENT_HOST</code> 控制监听地址（容器里要 0.0.0.0）</td></tr>
+        <tr><td class="mono">Pydantic v2 · httpx · python-dotenv</td><td class="mono">—</td><td>请求体校验、网关调用、配置加载</td></tr>
+
+        <tr><td rowspan="3"><b>前端</b></td>
+            <td class="mono">Next.js 15 App Router</td><td class="mono">^15.5.4</td><td>路由 + 服务端代理 <code>/api/agent/*</code>（浏览器不直连 worker）</td></tr>
+        <tr><td class="mono">React 19 + TypeScript</td><td class="mono">^19.1 / ^5.9</td><td>类型检查走 <code>tsc --noEmit</code> 进 CI 前自检</td></tr>
+        <tr><td class="mono">Tailwind CSS v4</td><td class="mono">^4.1.13</td><td>PostCSS 插件形态；明暗主题用 CSS 变量切换</td></tr>
+
+        <tr><td rowspan="2"><b>结构 CAD</b></td>
+            <td class="mono">build123d + OCP</td><td class="mono">==0.13.0（可选装）</td><td>约 700MB，仅 x86_64 manylinux wheel；ARM 机型装不上</td></tr>
+        <tr><td class="mono">E2B code-interpreter</td><td class="mono">&gt;=2.0,&lt;3.0</td><td>云端沙箱建模（推荐）：服务器本机不装 OCP，避免并发 OOM</td></tr>
+
+        <tr><td rowspan="2"><b>图像生成</b></td>
+            <td class="mono">Agnes 图像网关</td><td class="mono">agnes-image-2.5-flash</td><td>渲染图 / 爆炸图；图生图走 <code>image</code> 字段传 base64 data URI</td></tr>
+        <tr><td class="mono">多网关可切换</td><td class="mono">siliconflow / dashscope / openai</td><td>出图与文本模型<strong>解耦</strong>：换文本模型不影响出图链路</td></tr>
+
+        <tr><td rowspan="2"><b>EDA</b></td>
+            <td class="mono">自研 agent/eda（纯 Python）</td><td class="mono">零第三方依赖</td><td>网表规范化、板框、封装、原理图、PCB、Gerber、EPRO、SVG 预览</td></tr>
+        <tr><td class="mono">KiCad 10 CLI + 立创元件库 API</td><td class="mono">kicad-cli / REST</td><td>Gerber 导出、ERC、<code>EASYEDAPRO</code> 回读校验；符号封装取自立创官方库</td></tr>
+
+        <tr><td rowspan="2"><b>数据</b></td>
+            <td class="mono">SQLite（stdlib sqlite3）</td><td class="mono">data/agent.db</td><td>runs / events / files 三表，事件批量刷盘，带 schema 迁移与孤儿回收</td></tr>
+        <tr><td class="mono">文件系统</td><td class="mono">workspace/&lt;run&gt;/</td><td>产物权威来源，按阶段目录分层（00/10/20/30/40/90）</td></tr>
+
+        <tr><td rowspan="2"><b>部署</b></td>
+            <td class="mono">Docker Compose</td><td class="mono">worker + web + nginx</td><td>一键编排；worker 限内存 2G、web 1G</td></tr>
+        <tr><td class="mono">裸机 systemd</td><td class="mono">deploy/bare/</td><td>不想装 Docker 时的备选（两个 service + 宿主机 nginx）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>为什么是这些选择</h3>
+  <div class="cards c2">
+    <div class="card">
+      <h4><i class="dot"></i>全 OpenAI 兼容协议</h4>
+      <p>所有 LLM 调用统一 <code>/chat/completions</code>，服务商（7 家预置 + 自定义）只改 base_url 与 key。密钥优先级：前端设置 → <code>.env</code>（按 base_url 匹配）→ 演示模式。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot"></i>EDA 内核零依赖</h4>
+      <p>不引 kicad python 包、不引 EasyEDA SDK，网表/封装/PCB/Gerber 全用标准库算出来 —— 可离线跑、可单元测试、不随第三方版本漂移。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot t"></i>CAD 走云端沙箱</h4>
+      <p>本机 8GB 并发建模实测必崩；OCP 装包 700MB 且限制 x86_64。<code>AGENT_CAD_RUNTIME=auto</code> 优先 E2B，服务器保持轻量。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot w"></i>SQLite 而非 Postgres</h4>
+      <p>单机单进程、数据量小（会话/事件/清单）、零运维；代价是不能多副本 —— 已在 compose 里显式限制为单实例。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="s5">
+  <h2>5 · 智能体编排 <em>orchestration</em></h2>
+  <p class="sub">一个主智能体 + 七个角色子智能体；工具按角色裁剪，范式决定预算与推理策略。</p>
+
+  <h3>角色矩阵</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>角色</th><th>职责</th><th>工具数</th><th>关键约束</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">requirements-analyst</td><td>模糊需求 → 工程规格：功能清单、场景、约束、验收标准</td><td>4</td><td>先于一切设计开工</td></tr>
+        <tr><td class="mono">industrial-designer</td><td>形态语义、CMF、人机界面、三视图 SVG、渲染提示词</td><td>6</td><td>出图一条消息只派一个任务</td></tr>
+        <tr><td class="mono">mechanical-engineer</td><td>分件、壁厚拔模、装配序列、DFM，出 STEP/STL + 爆炸图</td><td>7</td><td>几何推演<strong>先落 model.py</strong> 再调工具</td></tr>
+        <tr><td class="mono">hardware-engineer</td><td>主控选型、连接表、电源树、引脚分配、PCB 约束、BOM</td><td>11</td><td>最重的一档，全套 EDA 工具</td></tr>
+        <tr><td class="mono">firmware-engineer</td><td>Arduino/C++、状态机、非阻塞时序、仿真步骤</td><td>5</td><td>引脚必须与硬件侧一致</td></tr>
+        <tr><td class="mono">integration-reviewer</td><td>四套方案交叉评审：尺寸/引脚/BOM/工艺</td><td>2</td><td>只出结论，不重复造物</td></tr>
+        <tr><td class="mono">general-purpose</td><td>兜底补位（带全套 16 工具）</td><td>16</td><td>优先级<strong>永远低于</strong>原角色</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warn">
+    <strong>踩过的坑：</strong>deepagents 会自动补一个内置 <code>general-purpose</code> 角色，其工具 = 文件中间件 + 主智能体工具
+    （本项目只有 <code>confirm_with_user</code>）。改派它只会回一句「没有 build_structure」，比原角色失败更糟。
+    现在显式提供同名 spec 覆盖内置，并给全套工具；同时主提示词规定<strong>补派只能补同一角色</strong>。
+  </div>
+
+  <h3>四档推理范式</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>档位</th><th>策略</th><th>工具预算</th><th>时限</th><th>步数上限</th><th>反思 / 分支</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">lean</td><td>ReAct · 边做边想</td><td>30</td><td>240s</td><td>120</td><td><span class="tag n">—</span></td></tr>
+        <tr><td class="mono">standard</td><td>Plan-and-Execute · 先画施工图</td><td>150</td><td>900s</td><td>600</td><td><span class="tag n">—</span></td></tr>
+        <tr><td class="mono">review</td><td>Reflexion · 事后反思</td><td>180</td><td>1200s</td><td>800</td><td><span class="tag">reflect</span></td></tr>
+        <tr><td class="mono">explore</td><td>Tree of Thoughts · 分支择优</td><td>220</td><td>1500s</td><td>1000</td><td><span class="tag">reflect</span><span class="tag g">branches=3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub">全部可通过环境变量覆盖（<code>AGENT_*_BUDGET</code> / <code>AGENT_*_SECONDS</code> / <code>AGENT_RECURSION_*</code>），并支持按负载自动降级（explore → review → standard → lean）。</p>
+
+  <h3>主智能体的硬约束</h3>
+  <ul class="tight">
+    <li><b>串行派单：</b>出图 / 建模一条消息只允许一个 <code>task</code> —— 并行派单会让参考图链断掉（后一张拿不到前一张做参考）。</li>
+    <li><b>补派同角色：</b>换人兜底优先级低于原角色；未完成判据有三条 —— 报工具不可用 / 回交空或只回「门禁通过」/ 承诺的文件没落盘。</li>
+    <li><b>补派上限：</b>同一阶段最多补派 2 次，第 3 次标注缺项进下一阶段（这是曾经把步数烧光的直接原因）。</li>
+    <li><b>中文硬约束：</b>含深度思考文本在内一律简体中文，否则会漂到波斯语/阿拉伯语。</li>
+    <li><b>别在思考里做长篇数值推演：</b>先落文件 —— 2.4 万字几何推演被截断而未落盘的教训。</li>
+  </ul>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="s6">
+  <h2>6 · 工具层 <em>16 tools</em></h2>
+  <p class="sub">工具是智能体唯一「能动手」的地方，按职责分五组。</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>分组</th><th>工具</th><th>作用</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3"><b>生成</b><br><span class="tag">耗时 · 会覆盖产物</span></td>
+            <td class="mono">generate_product_image<br>render_product_views</td>
+            <td>产品渲染图 / 多视角图。走 Agnes 网关；自动挑参考图保证同源，文件名按用途归位（render → <code>10_appearance</code>）</td></tr>
+        <tr><td class="mono">text_to_cad<br>build_structure</td>
+            <td>参数化建模脚本 → STEP / STL / 预览图 / 爆炸图；跑前静态检查 + 几何自检（体积≤0、任一维&gt;500mm、远超声明外形一律判失败）</td></tr>
+        <tr><td class="mono">export_gerbers</td><td>调用 KiCad CLI 出 Gerber / 钻孔 / 坐标文件并打包</td></tr>
+        <tr><td rowspan="4"><b>EDA 产出</b></td>
+            <td class="mono">emit_kicad_project</td><td>原理图 + 符号库 + sym-lib-table（符号必须内嵌 <code>lib_symbols</code>，否则 ERC 刷屏）</td></tr>
+        <tr><td class="mono">emit_pcb</td><td>板框 / 布局 / 安装孔 / GND 铺铜（<strong>不布线</strong>）</td></tr>
+        <tr><td class="mono">emit_easyeda</td><td>嘉立创 EDA 专业版 <code>.epro</code>（PCB + 原理图，符号封装取自立创官方库），附带 SVG 原理图预览</td></tr>
+        <tr><td class="mono">render_schematic</td><td>网页可直接打开的原理图 SVG</td></tr>
+        <tr><td rowspan="3"><b>校验</b></td>
+            <td class="mono">check_circuit</td><td>网表电气检查（含「没有任何连线的元件」「端点少点号」这类致命项）</td></tr>
+        <tr><td class="mono">build_bom</td><td>BOM 生成与归类</td></tr>
+        <tr><td class="mono">check_arduino</td><td>固件静态检查 + 引脚一致性核对</td></tr>
+        <tr><td rowspan="2"><b>闸门 / 产物</b></td>
+            <td class="mono">stage_gate</td><td>查本阶段门禁与产物清单（三档文案：已齐 / 仍缺 / 非契约产物）</td></tr>
+        <tr><td class="mono">save_artifact</td><td>落盘 + 建索引；空内容明确报错「不支持分块写，一次带全文」</td></tr>
+        <tr><td rowspan="2"><b>交互 / 检索</b></td>
+            <td class="mono">confirm_with_user</td><td>人机确认（唯一永不加锁的工具）</td></tr>
+        <tr><td class="mono">search_cirkit_docs</td><td>Cirkit Designer 文档 BM25 检索（23 页本地知识库）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>并发铁律：</strong>工具在线程池里并发跑，而 CPython 的 <code>_find_and_load</code> 是<strong>先拿子模块锁再导父包</strong>，
+    并发「一个导包根、一个导子模块」会成环 → <code>_DeadlockError</code>（实测约 10% 命中）。
+    因此统一走 <code>tools._mod(name, attr)</code>（首次导入串行 + 启动时预热），禁止在工具函数里裸写「用到才 import」。
+  </div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="s7">
+  <h2>7 · 护栏与容错 <em>guardrails</em></h2>
+  <p class="sub">护栏的目的不是把模型锁死，是「别把已确认的东西重做一遍」—— 任何拒绝型护栏都要配可执行的下一步 + 熔断。</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>机制</th><th>触发</th><th>行为</th><th>状态语义</th></tr></thead>
+      <tbody>
+        <tr><td><b>阶段护栏</b></td><td>在 DONE/CONFIRMED 阶段重做</td><td>拦 <span class="tag y">done 1 次 / confirmed 2 次</span> 后<strong>放行一次自我纠错</strong>并把状态退回一档；多产物工具在「目标文件不存在」时直接放行</td><td class="mono">REVISED</td></tr>
+        <tr><td><b>工具预算</b></td><td>按代价加权累计超预算</td><td>廉价只读 0.25、出图/CAD 1.0；只读工具阈值高一个量级</td><td class="mono">budget</td></tr>
+        <tr><td><b>时限</b></td><td>超过档位 <code>max_seconds</code></td><td>中止并保留产物，可自动续跑（复用同一工作区，最多 N 轮）</td><td class="mono">timeout</td></tr>
+        <tr><td><b>步数上限</b></td><td>LangGraph 撞 <code>recursion_limit</code></td><td>捕获后<strong>先收口工具卡片再转抛</strong>，按中止处理（不是故障），走同一条自动续跑通路</td><td class="mono">steps</td></tr>
+        <tr><td><b>目标达成</b></td><td>契约产物齐全</td><td>按「完成」收尾；产物已够时<strong>不显示「超出预算中止」</strong></td><td class="mono">done</td></tr>
+        <tr><td><b>用户停止</b></td><td>前端点停止</td><td><code>cancel_requested</code> 轮询点，协作式退出</td><td class="mono">cancelled</td></tr>
+        <tr><td><b>429 配额守卫</b></td><td>网关限流</td><td>预防式降速（快撞了先慢）+ 撞到后自动关深度思考（思考占总输出 75–85%）</td><td class="mono">—</td></tr>
+        <tr><td><b>CAD 几何自检</b></td><td>模型体积≤0 / 任一维&gt;500mm / 远超声明外形</td><td>判失败而不是当成功锁阶段</td><td class="mono">—</td></tr>
+        <tr><td><b>人机闸门</b></td><td>每阶段结束（可 <code>AGENT_HUMAN_GATE=0</code> 关闭）</td><td>落 <code>_human_review.md</code>，用户批准 / 打回带意见</td><td class="mono">CONFIRMED</td></tr>
+        <tr><td><b>服务重启回收</b></td><td>进程启动</td><td><code>reap_orphans()</code> 把上次没跑完的运行如实标记，不留 running 僵尸</td><td class="mono">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warn">
+    <strong>设计原则：</strong>「成功」判据必须包含产物自检，不能只看「没报错」。
+    曾经把 100×100×341mm 的畸形模型当成功并锁死阶段，后面想改又被护栏拦 —— 8 次调用全废，用户只能手动取消。
+  </div>
+
+  <h3>网络层与环境的坑（已内置规避）</h3>
+  <ul class="tight">
+    <li><b>IPv4 优先：</b>DNS 双栈下 Python 串行尝试且 IPv6 排前，本机 IPv6 出口高延迟 → 表现为「网关间歇性不可达」。进程级 patch 把解析结果排序（不是过滤），<code>AGENT_IPV4_FIRST=0</code> 可关。</li>
+    <li><b>外部 CLI 只探测一次：</b>uvx 起一次约 21s，且并发会撞自己的缓存锁（失败特征是 returncode≠0 且 stdout/stderr 全空）→ 探测出解释器绝对路径后固化，并加全局锁串行化。</li>
+    <li><b>探测失败带 TTL：</b>成功可永久缓存，失败只信 120s，否则一次抖动让能力在整个进程生命周期里判死。</li>
+  </ul>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="s8">
+  <h2>8 · 数据流与存储 <em>data flow</em></h2>
+
+  <div class="figure">
+    <svg viewBox="0 0 900 190" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,PingFang SC,sans-serif">
+      <defs><marker id="ar3" markerWidth="9" markerHeight="9" refX="7" refY="3.2" orient="auto">
+        <path d="M0,0 L7,3.2 L0,6.4 z" fill="#8a929e"/></marker></defs>
+      <g font-size="11.5">
+        <rect x="12" y="26" width="150" height="56" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="87" y="50" text-anchor="middle" font-weight="700" fill="var(--text)">浏览器</text>
+        <text x="87" y="68" text-anchor="middle" fill="var(--text-dim)">需求 / 设置 / 确认</text>
+
+        <rect x="200" y="26" width="150" height="56" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="275" y="50" text-anchor="middle" font-weight="700" fill="var(--text)">Next.js BFF</text>
+        <text x="275" y="68" text-anchor="middle" fill="var(--text-dim)">/api/agent/* 代理</text>
+
+        <rect x="388" y="26" width="150" height="56" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="463" y="50" text-anchor="middle" font-weight="700" fill="var(--text)">FastAPI worker</text>
+        <text x="463" y="68" text-anchor="middle" fill="var(--text-dim)">运行编排 + 事件写入</text>
+
+        <rect x="576" y="26" width="150" height="56" rx="10" fill="var(--surface-2)" stroke="var(--border)"/>
+        <text x="651" y="50" text-anchor="middle" font-weight="700" fill="var(--text)">SQLite</text>
+        <text x="651" y="68" text-anchor="middle" fill="var(--text-dim)">runs / events / files</text>
+
+        <rect x="764" y="26" width="124" height="56" rx="10" fill="var(--accent2-soft)" stroke="var(--accent2)"/>
+        <text x="826" y="50" text-anchor="middle" font-weight="700" fill="var(--text)">workspace</text>
+        <text x="826" y="68" text-anchor="middle" fill="var(--text-dim)">产物（权威）</text>
+      </g>
+      <g stroke="#8a929e" marker-end="url(#ar3)">
+        <line x1="162" y1="54" x2="200" y2="54"/>
+        <line x1="350" y1="54" x2="388" y2="54"/>
+        <line x1="538" y1="54" x2="576" y2="54"/>
+        <line x1="726" y1="54" x2="764" y2="54"/>
+      </g>
+      <path d="M651,82 L651,118 L463,118 L463,82" fill="none" stroke="#8a929e" stroke-dasharray="4 4" marker-end="url(#ar3)"/>
+      <text x="557" y="134" text-anchor="middle" font-size="10.5" fill="var(--text-faint)">SSE 回推 /api/stream/{run_id}（逐 token + 工具卡片 + 阶段状态）</text>
+      <text x="450" y="160" text-anchor="middle" font-size="10.5" fill="var(--text-faint)">文件清单以扫磁盘为准：/api/runs/{id}/files　（事件流里的 artifact 会漏，子智能体常直接 write_file）</text>
+      <text x="450" y="180" text-anchor="middle" font-size="10.5" fill="var(--text-faint)">运行是否真活着看 updated_at 是否推进 + _human_review.md，不能只看 status=running</text>
+    </svg>
+    <div class="figcap">图 3 · 数据流：请求走 BFF 代理，事件走 SSE 回推，产物以文件系统为权威</div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>接口</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">POST /api/run · /api/clarify</td><td>发起运行 / 生成需求补全问卷</td></tr>
+        <tr><td class="mono">GET /api/stream/{id}</td><td>SSE 事件流（nginx 必须 <code>proxy_buffering off</code>）</td></tr>
+        <tr><td class="mono">GET /api/runs · /{id} · /{id}/events</td><td>历史列表 / 详情 / 事件回放</td></tr>
+        <tr><td class="mono">GET /api/runs/{id}/files · /file · /raw · /manifest · /download</td><td>产物树、单文件内容、原始文本、清单、整包下载</td></tr>
+        <tr><td class="mono">POST /api/runs/{id}/review · /resume · /cancel</td><td>提交评审 / 断点续跑 / 请求停止</td></tr>
+        <tr><td class="mono">GET /api/paradigms · /providers · POST /api/models</td><td>范式档位 / 服务商清单 / 连通性与模型列表自检</td></tr>
+        <tr><td class="mono">GET /health · /api/stats</td><td>健康检查（非阻塞、不触发重型依赖）· 统计</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="s9">
+  <h2>9 · EDA 领域内核 <em>agent/eda</em></h2>
+  <p class="sub">两个事实源 + 多种投影产物；改一处就要重出所有产物。</p>
+
+  <div class="cards c2">
+    <div class="card">
+      <h4><i class="dot"></i>事实源一：netlist.json</h4>
+      <p>电路连接。端点必须是「位号.引脚名」格式（模型常写成 <code>C2正极</code> 漏点号，会被当裸网络名丢掉，导致元件「没有任何连线」→ PCB 无飞线）。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot t"></i>事实源二：board.json</h4>
+      <p>板框与布局约束。<strong>板中心为原点、mm、Y 向下</strong>，板型支持 rect / rounded_rect / circle / ellipse / polygon。它是 PCB 外形的机器可读来源（曾只写在 markdown 表格里，三个会话三种写法，程序读不了）。</p>
+    </div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>子模块</th><th>职责</th><th>要点</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">netlist.py</td><td>规范化 + 并查集聚网</td><td>极性别名表 + 右剥极性词 + 端点字符串回写</td></tr>
+        <tr><td class="mono">board.py · parts.py</td><td>板框解析 / 器件尺寸与布局</td><td>接口先占边 → 主控居中 → 其余从中心向外找空位；三级放宽间距</td></tr>
+        <tr><td class="mono">lib.py</td><td>立创官方元件库对接</td><td>符号 1:1、封装 ×10 单位差；种类冲突必须在 <code>fetch()</code> 之后再判；403 有退避</td></tr>
+        <tr><td class="mono">symbols.py · sch.py</td><td>符号生成 / 原理图段排版</td><td>A4 = 1170×825（1/100 英寸），排版必须卡在框内</td></tr>
+        <tr><td class="mono">kicad.py</td><td><code>.kicad_sch</code> / <code>.kicad_pcb</code></td><td>符号必须内嵌 lib_symbols 并同时出 sym-lib-table</td></tr>
+        <tr><td class="mono">pcb.py</td><td>板框 / 布局 / 安装孔 / 铺铜</td><td>只布局不布线；<code>POLYGON</code> 焊盘会让导入器段错误 → 一律降级成矩形</td></tr>
+        <tr><td class="mono">gerber.py</td><td>Gerber / 钻孔 / 坐标</td><td>KiCad 10 铜层命名两种都要认（<code>-top_cu.gtl</code> 与 <code>-F_Cu.gtl</code>）</td></tr>
+        <tr><td class="mono">easyeda.py</td><td><code>.epro</code> writer（zip 容器）</td><td>PCB 段单位 mil、坐标必须为正；行长度错一个字段就不渲染</td></tr>
+        <tr><td class="mono">preview.py</td><td>纯 Python 渲染原理图 SVG</td><td>RECT 是两个角点、POLY 点是扁平数组、PIN 的 (x,y) 是外接点</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>真机校验闭环：</strong>KiCad 10 的 <code>EASYEDAPRO</code> 导入器可回读 <code>.epro</code>（只读 v2.2，不读 v3），
+    按「封装 / 焊盘 / 网络 / bbox / 空位号」对拍；原理图目前只能做结构自检。
+    <code>kicad-cli</code> 同时用于 <code>sch erc</code>（报告是 GBK，要按 GBK 解码）与 Gerber 导出。
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="s10">
+  <h2>10 · 部署架构 <em>deployment</em></h2>
+  <p class="sub">两条路径：Docker Compose（推荐）与裸机 systemd。</p>
+
+  <div class="cards c3">
+    <div class="card">
+      <h4><i class="dot"></i>worker</h4>
+      <p>Python 3.13 slim 镜像，<code>AGENT_HOST=0.0.0.0</code>，端口 8001，内存限 2G；挂载 <code>data/</code>（要备份）与 <code>workspace/</code>（按需清理）；healthcheck 打 <code>/health</code>。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot t"></i>web</h4>
+      <p>Next.js 生产构建，<code>AGENT_WORKER_URL=http://worker:8001</code>（走 compose 内网，浏览器不直连），依赖 worker 健康后才起。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot w"></i>nginx</h4>
+      <p>80（+可选 443）入口，转发 <code>/api/stream/*</code> 必须 <code>proxy_buffering off</code>，否则 SSE 被缓冲成一次性下发。</p>
+    </div>
+  </div>
+
+  <ul class="tight">
+    <li><b>实例架构必须 x86_64：</b>OCP 只有 x86_64 manylinux wheel（ARM 倚天 710 装不上）；但推荐直接走 E2B 云端建模，服务器不装 OCP。</li>
+    <li><b>单副本：</b>store 用 SQLite 且连接是模块级单例，多副本会互相抢库。</li>
+    <li><b>密钥只写 .env：</b><code>config.py</code> 用 <code>override=True</code> 加载，避免 shell 残留同名变量静默顶掉（曾导致「换了 key 还是 401」）。</li>
+    <li><b>裸机方案：</b><code>deploy/bare/</code> 提供两个 systemd unit + 宿主机 nginx 配置 + <code>setup.sh</code>；日常运维用 <code>deploy/agentctl.sh</code>。</li>
+  </ul>
+</section>
+
+<!-- ============ 11 ============ -->
+<section id="s11">
+  <h2>11 · 质量保障 <em>verification</em></h2>
+  <p class="sub">36 个自检脚本，覆盖 EDA 链路、阶段门禁、护栏、并发、真实闭环。</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>类别</th><th>脚本</th><th>断言量级</th><th>覆盖</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="2"><b>EDA 主干</b></td>
+            <td class="mono">test_kicad · test_pcb · test_gerber · test_easyeda · test_lib · test_artifact_sync</td>
+            <td><b>297</b></td>
+            <td>符号/封装/网络/板框/Gerber/EPRO 字段与回读对拍</td></tr>
+        <tr><td class="mono">test_eda_import_race</td><td>13</td><td>并发导入死锁（命中率约 10%，需多轮子跑）</td></tr>
+        <tr><td rowspan="3"><b>编排与护栏</b></td>
+            <td class="mono">test_subagent_tools</td><td>65</td><td>角色工具齐全 / 确实裁剪 / 跨角色不串 / 提示词覆盖工具名</td></tr>
+        <tr><td class="mono">test_paradigms · test_step_limit</td><td>45 + 18</td><td>档位预算、env 覆盖、中止语义、假流耗尽转 <code>RunStepLimit</code>、续跑名单</td></tr>
+        <tr><td class="mono">test_stage_once · test_loop_guard · test_goal_stop · test_timeout_extend · test_rate_limit · test_delete_run</td><td>约 100</td><td>阶段门禁、死循环熔断、目标达成、超时续跑、限流、删除</td></tr>
+        <tr><td><b>真机闭环</b></td>
+            <td class="mono">run_product_e2e.py + check_real_board.py</td><td>—</td><td>跑完整需求（自动替人点确认），产出后按板级断言验收</td></tr>
+        <tr><td><b>前端</b></td>
+            <td class="mono">tsc --noEmit · test_plan.ts · test_feed.ts</td><td>—</td><td>类型检查 + 阶段/事件解析逻辑与后端同源校验</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>回归纪律：</strong>并发类 bug 单轮命中率只有约 10%，必须子进程多轮跑
+    （现成写法见 <code>scripts/test_eda_import_race.py</code> 的 <code>race_rounds()</code>）。
+    改 EDA 任一处要重出全部投影产物后再跑主干 297 项。
+  </div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section id="s12">
+  <h2>12 · 已知边界与待办 <em>limits</em></h2>
+
+  <div class="cards c2">
+    <div class="card">
+      <h4><i class="dot w"></i>只做布局，不布线</h4>
+      <p>PCB 产出板框 / 布局 / 安装孔 / GND 铺铜，DRC 里几十条 <code>unconnected_items</code> 是预期的 —— 统计 DRC 必须把 violations 与 unconnected 分开。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot w"></i>KiCad 链路未接立创库</h4>
+      <p><code>.kicad_pcb</code> / <code>.kicad_sch</code> 仍是参数化符号与近似封装；<code>.epro</code> 已接立创官方库。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot w"></i>封装命中率约 16/22</h4>
+      <p>兜底的是 PMS7003、排针、锂电、直插 LED、OLED 屏等。<strong>宁可兜底也不配错</strong> —— 曾出现 USB-C→40P 排针、OLED→贴片电感、锂电→CR2032 座。</p>
+    </div>
+    <div class="card">
+      <h4><i class="dot w"></i>原理图美观四项待打磨</h4>
+      <p>GND/VCC 电源符号、功能分区框、引脚名落地到 <code>.esym</code>、大件撑高整行留白。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>智能产品设计智能体 · 设计框架与技术栈报告</div>
+  <div>生成于 2026-10-30 · 仓库 <code>smarthardware_agent</code></div>
+</footer>
+
+    </main>
+  </div>
+</div>
+
+<script>
+(function(){
+  var saved = null;
+  try { saved = localStorage.getItem('pda-report-theme'); } catch(e){}
+  var sys = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  apply(saved || sys);
+  window.toggleTheme = function(){
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    apply(next);
+    try { localStorage.setItem('pda-report-theme', next); } catch(e){}
+  };
+  function apply(t){
+    document.documentElement.setAttribute('data-theme', t);
+    document.getElementById('ttext').textContent = t === 'dark' ? '浅色' : '深色';
+    document.getElementById('ticon').textContent = t === 'dark' ? '☀' : '◐';
+  }
+})();
+</script>
+</body>
+</html>
