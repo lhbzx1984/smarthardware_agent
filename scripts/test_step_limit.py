@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 import tempfile
@@ -70,8 +71,6 @@ check(
 
 os.environ["AGENT_RECURSION_STANDARD"] = "777"
 try:
-    import importlib
-
     reloaded = importlib.reload(paradigms)
     check("AGENT_RECURSION_STANDARD=777 生效", reloaded.STANDARD.recursion_limit == 777, str(reloaded.STANDARD.recursion_limit))
 finally:
@@ -81,10 +80,6 @@ finally:
 
 # ---------------------------------------------------------------- 2. 中止语义
 print("[2] 撞上限 = 中止，不是故障")
-
-
-class _StepLimitBoom(Exception):
-    pass
 
 
 check("RunStepLimit 是 RunAborted 子类（能被 server 的中止分支接住）", issubclass(guards.RunStepLimit, guards.RunAborted))
