@@ -243,6 +243,84 @@ def test_stream_args() -> None:
     check("配对顺序正确", bool(s_b and e_b) and ev_b.index(s_b[0]) < ev_b.index(e_b[0]))
 
 
+def test_write_file_noargs_not_repeat() -> None:
+    """write_file / edit_file 抓不到参数时不许按「同一调用重复」记账。
+
+    真事：content 太长、网关不逐块下发，tool_start 的 args 恒为空 → 签名退化成工具名
+    → 写 appearance.md / netlist.json / firmware.ino 这些毫不相干的动作被凑成
+    「write_file 重复 16 次」，撞上 NOARG 限额，把最后的评审阶段砍了。
+    """
+    print("[7] 写文件工具空参数 —— 不判重复")
+    r = _fresh_run()
+    r.last_progress = time.time() - config.STALL_SECONDS - 5
+    aborted = None
+    try:
+        for i in range(config.REPEAT_LIMIT_NOARG + 6):
+            r.push({"type": "tool_start", "cid": f"c{i}", "name": "write_file", "args": ""})
+            r.push({"type": "tool_end", "cid": f"c{i}", "name": "write_file", "result": ""})
+    except guards.RunAborted as e:
+        aborted = e
+    check("空参数的 write_file 不因次数被杀", aborted is None, str(aborted))
+    check("预算照常扣（不是免罚）", r.tool_weight >= config.REPEAT_LIMIT_NOARG, str(r.tool_weight))
+    # 带参数的同名工具仍照常受重复判据约束
+    r2 = _fresh_run()
+    r2.last_progress = time.time() - config.STALL_SECONDS - 5
+    hit = None
+    try:
+        for i in range(config.REPEAT_LIMIT + 3):
+            r2.push({"type": "tool_start", "cid": f"c{i}", "name": "write_file", "args": '{"path":"/a.md"}'})
+            r2.push({"type": "tool_end", "cid": f"c{i}", "name": "write_file", "result": ""})
+    except guards.RunAborted as e:
+        hit = e
+    check("带参数的 write_file 照样能拦住", hit is not None)
+
+
+def test_thinking_grace() -> None:
+    """模型仍在吐字 = 在长推理，不该被「N 秒没落盘」一刀切。
+
+    真事：评审子智能体连写两段 5000+ 字思考、期间 120 秒零写操作，被判无效循环，
+    最后一份结论还没落盘整轮就中止（用户看到「没有最终评审就结束了」）。
+    """
+    print("[8] 长推理宽限 —— 吐字时放行，用尽后才中止")
+    r = _fresh_run()
+    r.last_progress = time.time() - config.STALL_SECONDS - 5
+    grace0 = r.repeat_grace
+    aborted = None
+    try:
+        for g in range(config.REPEAT_GRACE_TIMES):
+            for i in range(config.REPEAT_LIMIT + 2):
+                r.push({"type": "thinking", "text": f"继续推演 {g}-{i}"})
+                r.push({"type": "tool_start", "cid": f"c{g}-{i}", "name": "save_artifact", "args": '{"path":"/a.md"}'})
+                r.push({"type": "tool_end", "cid": f"c{g}-{i}", "name": "save_artifact", "result": ""})
+        # 宽限已用尽：再吐字也不该再放行
+        for i in range(config.REPEAT_LIMIT + 2):
+            r.push({"type": "thinking", "text": f"还在想 {i}"})
+            r.push({"type": "tool_start", "cid": f"z{i}", "name": "save_artifact", "args": '{"path":"/a.md"}'})
+            r.push({"type": "tool_end", "cid": f"z{i}", "name": "save_artifact", "result": ""})
+    except guards.RunAborted as e:
+        aborted = e
+    check("宽限期间确实放行过（没在第一轮就砍）", r.progress_marks >= 0 and grace0 >= 1)
+    check("宽限已被用尽", r.repeat_grace == 0, str(r.repeat_grace))
+    check("宽限用尽后照常中止", aborted is not None, str(type(aborted)))
+    check("宽限次数来自配置", grace0 == config.REPEAT_GRACE_TIMES, str(grace0))
+
+    # 只会机械调工具、一个字都不吐的循环：没有宽限，立刻拦
+    r2 = _fresh_run()
+    r2.last_progress = time.time() - config.STALL_SECONDS - 5
+    hit = None
+    try:
+        for i in range(config.REPEAT_LIMIT + 2):
+            r2.push({"type": "tool_start", "cid": f"c{i}", "name": "save_artifact", "args": '{"path":"/a.md"}'})
+            r2.push({"type": "tool_end", "cid": f"c{i}", "name": "save_artifact", "result": ""})
+    except guards.RunAborted as e:
+        hit = e
+    check(
+        "不吐字的空转拿不到宽限",
+        hit is not None and r2.repeat_grace == config.REPEAT_GRACE_TIMES,
+        f"grace={r2.repeat_grace} hit={type(hit)}",
+    )
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp())
     store.DB_PATH = tmp / "loop-guard-selftest.db"
@@ -255,6 +333,8 @@ def main() -> int:
     test_abort_qualifies_as_delivery()
     test_budget_weighting()
     test_stream_args()
+    test_write_file_noargs_not_repeat()
+    test_thinking_grace()
     print(f"\n{PASS} 通过 / {FAIL} 失败")
     return 1 if FAIL else 0
 

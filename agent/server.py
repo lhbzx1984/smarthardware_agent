@@ -116,6 +116,14 @@ class Run:
         # 「停滞」判据用的进展时刻：只要还在出产物/拿到有效结果，重复读文件就是正常工作
         self.last_progress = self.created
         self.progress_marks = 0
+        # 「还在思考」的时刻：只认模型自己吐出来的文本（token / thinking）。
+        # 不能用「有没有事件」代替 —— 真·空转循环也在不停地发 tool_start/tool_end，
+        # 按事件活跃度判，原地打转反而显得最活跃。真正的区别是：长推理会持续输出文字，
+        # 空转循环只会机械地重复调工具（实测评审推演 1.2 万字期间零写操作，不是空转）。
+        # 0 = 「还没吐过字」：没输出就没有宽限，宽限是奖励而不是默认值。
+        self.last_emit = 0.0
+        # 重复限额已到但模型仍活跃时的放行余额，见 REPEAT_GRACE_TIMES
+        self.repeat_grace = config.REPEAT_GRACE_TIMES
         # 已达到阈值但没停滞的工具：只提示一次，且不重复刷屏
         self.warned_tools: set[str] = set()
         # 目标达成判据：以落盘产物为准（不信模型自觉回写），齐全后给一段收尾宽限期
@@ -173,6 +181,9 @@ class Run:
             ev["ts_model"] = ev["ts"]
         ev["ts"] = time.time()
         etype = str(ev.get("type") or "")
+        # 只认模型自己吐出来的文本：thinking / token。
+        if etype in ("token", "thinking"):
+            self.last_emit = ev["ts"]
 
         # 产物先记账再过护栏：目标达成的判据就是这些路径
         if etype == "artifact" and ev.get("path"):
@@ -208,7 +219,7 @@ class Run:
         不拨的话会出现「用户看了 10 分钟图，回来点确认，护栏立刻判超时中止」这种荒唐结果。
         """
         s = max(0.0, float(seconds or 0.0))
-        self.started += s
+        self.last_emit += s
         self.last_progress += s
         if self.goal_at:
             self.goal_at += s
@@ -319,6 +330,11 @@ class Run:
             )
             raise self._abort_signal(self.abort_reason)
 
+        # 写文件工具抓不到参数时**不判重复**：签名会退化成工具名，于是写 16 个彼此
+        # 无关的文件也被凑成「同一调用重复 16 次」。证据不足就不动手，预算照扣。
+        if not args.strip() and name in config.FILE_WRITE_TOOLS:
+            return
+
         sig = (self._sig_of(name, args), "")
         n = self.call_sig.get(sig, 0) + 1
         self.call_sig[sig] = n
@@ -340,6 +356,26 @@ class Run:
                         ),
                     }
                 )
+            return
+
+        # 没落盘 ≠ 卡死：模型还在吐 token / thinking 就说明它在长推理。
+        # 评审子智能体常在思考里推演上万字才动笔（实测 120 秒零写操作），
+        # 一刀切砍下去丢的是最后一个阶段的结论。所以给有限次宽限，用尽才中止。
+        if (
+            self.repeat_grace > 0
+            and (time.time() - self.last_emit) <= config.ACTIVE_IDLE_SECONDS
+        ):
+            self.repeat_grace -= 1
+            self.call_sig[sig] = 0  # 重置计数，给一次重新证明自己的机会
+            self.push(
+                {
+                    "type": "warn",
+                    "message": (
+                        f"{name} 已重复 {n} 次且 {int(config.STALL_SECONDS)} 秒没有新产物落盘，"
+                        f"但模型仍在输出 —— 按长推理放行（剩余宽限 {self.repeat_grace} 次）"
+                    ),
+                }
+            )
             return
 
         self.abort_reason = (
@@ -378,6 +414,13 @@ class Run:
         import guards
         import stages
 
+        # 定性之前先扫一次磁盘：模型常用 write_file 直写，artifact 事件会滞后，
+        # 于是「文件其实已经落盘」却被报成「5/6」。实测评审报告在收尾那一秒写好，
+        # 交付文案却写「已产出 5/6 个阶段产物」，用户以为最终评审根本没做。
+        try:
+            self.artifacts |= set(stages.scan_dir(self.dir))
+        except Exception:  # noqa: BLE001  扫盘失败就用内存里那份，不至于定性出错
+            pass
         try:
             prog = stages.stage_progress(self.artifacts)
         except Exception:  # noqa: BLE001

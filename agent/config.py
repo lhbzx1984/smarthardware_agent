@@ -247,6 +247,16 @@ READ_ONLY_TOOLS = frozenset(
     if t.strip()
 )
 REPEAT_LIMIT_READ = int(os.getenv("AGENT_REPEAT_LIMIT_READ", "24"))   # 只读工具
+# 内置文件写工具（deepagents 文件中间件）。它们的 tool_start 常常**抓不到 args**：
+# content 太长、网关不逐块下发，签名就退化成「只有工具名」—— 于是「写 appearance.md、
+# 写 netlist.json、写 firmware.ino」这些完全不同的动作被凑成「同一调用重复 N 次」。
+# 实测一次运行里 write_file 这样被数到 16 次，撞上 NOARG 限额，把最后的评审阶段砍了。
+# 证据不足就不判重复（预算照扣）：宁可漏判，也不再为此误杀。
+FILE_WRITE_TOOLS = frozenset(
+    t.strip()
+    for t in os.getenv("AGENT_FILE_WRITE_TOOLS", "write_file,edit_file").split(",")
+    if t.strip()
+)
 # 同一个文件被反复读（不同 offset/limit 算同一个文件）：这基本只有「想不起来自己写过什么」
 # 一种解释。限额压得比普通只读更低，否则模型能把一次运行耗在反复回读自己刚写的报告上。
 REPEAT_LIMIT_SAMEFILE = int(os.getenv("AGENT_REPEAT_LIMIT_SAMEFILE", "10"))
@@ -256,6 +266,14 @@ REPEAT_LIMIT_NOARG = int(os.getenv("AGENT_REPEAT_LIMIT_NOARG", "15"))
 # 关键：**只读工具返回内容不算进展** —— 读文件不改变世界，把它的返回值当「还在往前走」，
 # 就等于给「反复回读」发了免死金牌（实测评审子智能体连读 37 次自己的报告不肯收尾）。
 STALL_SECONDS = float(os.getenv("AGENT_STALL_SECONDS", "120"))
+# 「模型还活着」的判据：距上一条任何事件（token / thinking / 工具调用）不超过这么久。
+# 150 秒没落盘但 thinking 一直在吐 ≠ 空转 —— 那是子智能体在长推理（评审工程师写完
+# 1.2 万字推演才动笔就是这种）。此时不该一刀切，见 REPEAT_GRACE_TIMES。
+ACTIVE_IDLE_SECONDS = float(os.getenv("AGENT_ACTIVE_IDLE_SECONDS", "60"))
+# 重复限额已到、但没有实质进展时，只要模型仍活跃就放行几次？
+# 每次放行会重置该签名的计数并推一条可见提示。放行不是无限：用尽后照常中止，
+# 免得「让我再检查一下…」这种空转把整轮拖死。
+REPEAT_GRACE_TIMES = int(os.getenv("AGENT_REPEAT_GRACE_TIMES", "3"))
 # 预算按「代价」加权：只读廉价调用只算零点几次，昂贵调用（渲染/CAD/出图）才算 1 次
 TOOL_WEIGHT_READ = float(os.getenv("AGENT_TOOL_WEIGHT_READ", "0.25"))
 # 自定义工具里廉价的那几个：stage_gate 是纯磁盘判据（子智能体各调一次本就正常），

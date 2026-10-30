@@ -111,8 +111,10 @@ gp_sp = AGENTS["general-purpose"]["system_prompt"]
 check("general-purpose 提示词声明它有全套专用工具", "全套专用工具" in gp_sp)
 check("general-purpose 提示词点名别再说没工具", "没有 generate_product_image" in gp_sp)
 
-print("\n【9】结构阶段：禁止长篇推演，脚本必须先落文件")
-check("通用准则有「别在思考里做长篇数值推演」", "长篇数值推演" in subagents.COMMON_RULES)
+print("\n【9】禁止长篇推演：结构先落脚本、评审先落骨架")
+check("通用准则有「别在思考里做长篇推演」", "别在思考里做长篇推演" in subagents.COMMON_RULES)
+# 评审角色最容易踩：推演完上万字才动笔 → 期间零写操作被护栏判空转（实测砍掉最终评审）
+check("评审角色要求「先落骨架再补内容」", "先落骨架再补内容" in AGENTS["integration-reviewer"]["system_prompt"])
 mech = AGENTS["mechanical-engineer"]["system_prompt"]
 check("结构工程师提示词要求先把脚本写进 model.py", "20_structure/model.py" in mech)
 check("结构工程师提示词点名截断事故", "2.4 万字" in mech or "2.4万" in mech or "截断" in mech)
