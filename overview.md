@@ -6,6 +6,41 @@
 > clone 加 `--recursive`（`vendor/text-to-cad` 建模规范是子模块）。
 > `.env` / `data/` / `workspace/` / `node_modules` / `.next` 已排除，不含密钥。
 
+## 最新改动：修「外观阶段零渲染图交付」+ 强制串行派单（2026-10-30 · 第十五轮）
+
+真实运行「便携式土壤湿度检测仪」（run `cd8a78352166`）暴露的问题：**外观阶段一张渲染图都没出**，
+子智能体在思考里断定「当前环境没有 generate_product_image」，主智能体照单全收并请用户确认；
+同时主智能体一边派出图、一边自己把 `20_structure/structure.md` 写完（违反调度者角色 + 违反串行）。
+
+**根因（已实测排除法定位）**：不是工具没绑——我实测过 deepagents 的 harness profile
+（`_harness_profile_for_model`）对当前模型 `excluded_tools` 为空，六个子智能体确实都拿到了工具。
+是**模型幻觉**：网关降级到备用模型后，模型在 thinking 里枚举"我有哪些工具"列了一份错的清单
+（ls/read_file/write_file/edit_file/delete/glob/grep + confirm_with_user），
+于是压根不去调用出图工具。工具越多越容易迷失 —— 16 个全塞给每个角色是催化因素。
+
+**改动**：
+1. `agent/subagents.py`：新增 `TOOLS_FOR`，**按角色裁剪工具集**（需求 4 / 外观 6 / 结构 7 /
+   硬件 11 / 固件 5 / 评审 2，原来一律 16）。
+2. 新增 `tools_note(agent)`：把该角色**真正持有的工具名**写进它自己的提示词，
+   并明说「清单是权威的，思考时以为自己没某个工具也要照清单调用」+
+   「图片由 Agnes 出图服务生成，与文本模型是哪一家无关，换模型不会让出图能力消失」。
+3. `agent/main_agent.py` 提示词：出图/建模阶段**串行是硬约束**（一条消息只允许一个 task），
+   派单描述必须中文，子智能体报「本次未生成 / 工具不可用」时**必须先补派同一个子智能体一次**
+   （并在描述里点名该调的工具），不允许直接确认交付；顺带写明 task 只有
+   `subagent_type` + `description` 两个参数（实测有人传 `description_en` 被 schema 拒绝）。
+4. `agent/tools.py`：`save_artifact` 空 content 时的报错补上「不支持分块写，一次带全文」
+   （实测有模型先传空 content 占位建文件，界面于是先冒出一个空产物）。
+
+**回归**：新增 `scripts/test_subagent_tools.py`（47 项：契约工具齐全 / 确实裁剪过 /
+跨角色不串工具 / 提示词清单覆盖每个工具名 / 主提示词串行与补派约束）。
+连同 deadlock、stage_once、artifact_guard、visual_chain、artifact_sync、goal_stop、
+human_gate、loop_guard、workspace_path、path_resolve、eda_import_race 全绿。worker 已重启。
+
+**这次运行的遗留**：10_appearance 下只有 `orthographic.svg` + `render-prompts.md`，没有 render 图；
+`prompts.json` 里只有一条结构阶段补的 exploded 提示词（没有 render 基线）。
+结构阶段靠 appearance.md 的尺寸交接表兜住了（总长 170mm 对得上），但**形状约束本该来自渲染图**——
+重跑一次新需求即可验证修复效果。
+
 ## 最新改动：修 EDA 工具并发导入死锁（2026-10-30 · 第十四轮）
 
 **现象**：一次运行里 EDA 工具报

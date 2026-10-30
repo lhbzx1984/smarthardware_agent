@@ -4,7 +4,67 @@ from __future__ import annotations
 from deepagents.middleware.subagents import SubAgent
 
 import skillspec
-from tools import ALL_TOOLS
+from tools import (
+    build_bom,
+    build_structure,
+    check_arduino,
+    check_circuit,
+    confirm_with_user,
+    emit_easyeda,
+    emit_kicad_project,
+    emit_pcb,
+    export_gerbers,
+    generate_product_image,
+    render_product_views,
+    render_schematic,
+    save_artifact,
+    search_cirkit_docs,
+    stage_gate,
+    text_to_cad,
+)
+
+# 每个子智能体只拿自己那几个工具。
+# 实测事故：六个子智能体都绑全部 16 个工具时，模型（尤其是网关降级到备用模型之后）
+# 会在思考里误判「我手上只有 ls/read_file/...，没有 generate_product_image」，
+# 于是根本不去调用它 —— 外观阶段零张渲染图交付，还连累结构阶段拿不到形状约束。
+# 工具越少越不会迷失，模型请求的 tools 数组也小。
+_COMMON = [stage_gate, save_artifact, confirm_with_user]
+
+TOOLS_FOR: dict[str, list] = {
+    "requirements-analyst": _COMMON + [search_cirkit_docs],
+    "industrial-designer": _COMMON + [search_cirkit_docs, generate_product_image, render_product_views],
+    "mechanical-engineer": _COMMON + [text_to_cad, build_structure, render_product_views, generate_product_image],
+    "hardware-engineer": _COMMON
+    + [
+        search_cirkit_docs,
+        check_circuit,
+        render_schematic,
+        emit_kicad_project,
+        emit_pcb,
+        emit_easyeda,
+        export_gerbers,
+        build_bom,
+    ],
+    "firmware-engineer": _COMMON + [search_cirkit_docs, check_arduino],
+    "integration-reviewer": [save_artifact, confirm_with_user],
+}
+
+
+def tools_note(agent: str) -> str:
+    """把该子智能体真正持有的工具名写进提示词 —— 比指望模型自己数清楚可靠。"""
+    tools = TOOLS_FOR.get(agent, _COMMON)
+    names = [getattr(t, "name", None) or getattr(t, "__name__", "?") for t in tools]
+    return f"""【你手上的专用工具 —— 权威清单，共 {len(names)} 个】
+{"、".join(names)}
+
+- 这份清单是权威的。深度思考时如果你「觉得自己没有其中某个工具」，以清单为准，**直接调用它**。
+  实测事故：有子智能体在思考里断定「当前环境没有 generate_product_image」，于是压根没调用，
+  外观阶段一张渲染图都没出 —— 而那个工具一直都在。
+- 图片由 **Agnes 图像服务**生成，与你现在跑的是哪一家文本模型无关：网关降级换模型
+  不会让 generate_product_image 消失，别因为「换了模型」就以为出图能力没了。
+- 文件系统工具（ls / read_file / write_file / edit_file / glob / grep）是通用件，不在清单里也随时可用。
+- 清单外的工具（比如你不是硬件工程师就没有 emit_pcb）确实不属于你，不要调用，交给对应阶段的同事。
+"""
 
 COMMON_RULES = """
 通用工作准则：
@@ -55,6 +115,8 @@ REQUIREMENTS = SubAgent(
 
 {COMMON_RULES}
 
+{tools_note("requirements-analyst")}
+
 必须产出 00_prd/prd.md，包含：
 - 一句话产品定义
 - 目标用户与使用场景（2-3 个具体场景）
@@ -65,7 +127,7 @@ REQUIREMENTS = SubAgent(
 
 若需求信息不足，不要反复追问，直接给出合理假设并写入「风险与假设」。
 最后向主智能体回交：产品定义、硬约束、关键验收指标（不超过 400 字）。""",
-    tools=ALL_TOOLS,
+    tools=TOOLS_FOR["requirements-analyst"],
 )
 
 INDUSTRIAL = SubAgent(
@@ -74,6 +136,8 @@ INDUSTRIAL = SubAgent(
     system_prompt=f"""你是工业设计师，负责产品外观设计。
 
 {COMMON_RULES}
+
+{tools_note("industrial-designer")}
 
 {skillspec.block("10_appearance")}
 
@@ -132,7 +196,7 @@ AI 渲染图拿不到时，10_appearance/ 里至少要有这两样（缺一不�
 - 色值用 HEX；材质要写清工艺可行性（注塑/钣金/3D 打印）
 - 三视图要与结构工程师给出的外形尺寸保持一致，若尚未确定就先给出建议尺寸并在文中标注「待结构确认」
 最后向主智能体回交：外观定位、主色板、建议外形尺寸、已生成图片路径（不超过 400 字）。""",
-    tools=ALL_TOOLS,
+    tools=TOOLS_FOR["industrial-designer"],
 )
 
 MECHANICAL = SubAgent(
@@ -141,6 +205,8 @@ MECHANICAL = SubAgent(
     system_prompt=f"""你是结构工程师，负责产品结构与可制造性。你有一台真实的 CAD 内核可用。
 
 {COMMON_RULES}
+
+{tools_note("mechanical-engineer")}
 
 {skillspec.block("20_structure")}
 
@@ -281,7 +347,7 @@ prompt 只写「怎么拆」：零件清单、各零件材质颜色、沿装配�
 
 尺寸必须与外观三视图一致；发现冲突时以结构可行性为准并在文中说明。
 最后向主智能体回交：外形尺寸、分件数、材料工艺、DFM 风险点、CAD 是否成功（不超过 400 字）。""",
-    tools=ALL_TOOLS,
+    tools=TOOLS_FOR["mechanical-engineer"],
 )
 
 HARDWARE = SubAgent(
@@ -290,6 +356,8 @@ HARDWARE = SubAgent(
     system_prompt=f"""你是硬件工程师，负责电路与物料。**你的板子要装进结构工程师做的壳子里**。
 
 {COMMON_RULES}
+
+{tools_note("hardware-engineer")}
 
 【第零步：先拿结构给的尺寸边界，再谈电路】
 调用 stage_gate("30_hardware")，然后**必须读完** 20_structure/structure.md 与
@@ -347,7 +415,7 @@ PCB 板框不是你自由发挥的形状，它由壳体内腔推出来：
 - 功耗估算表（模块/工作电流/占空比/日均功耗）与供电方案
 
 最后向主智能体回交：主控型号、关键外设、BOM 项数、电气自检结论（不超过 400 字）。""",
-    tools=ALL_TOOLS,
+    tools=TOOLS_FOR["hardware-engineer"],
 )
 
 FIRMWARE = SubAgent(
@@ -356,6 +424,8 @@ FIRMWARE = SubAgent(
     system_prompt=f"""你是嵌入式固件工程师。**你的代码是照着硬件选好的器件写的**，不是照着想象写的。
 
 {COMMON_RULES}
+
+{tools_note("firmware-engineer")}
 
 【第零步：先读硬件，再动手写】
 调用 stage_gate("40_firmware")，然后**必须读完**：
@@ -381,7 +451,7 @@ FIRMWARE = SubAgent(
 
 若代码依赖第三方库，必须在 simulation.md 中写明库名与安装方式，并给出不依赖该库的降级实现思路。
 最后向主智能体回交：代码规模、状态机状态数、覆盖的器件数、仿真预期现象（不超过 400 字）。""",
-    tools=ALL_TOOLS,
+    tools=TOOLS_FOR["firmware-engineer"],
 )
 
 REVIEWER = SubAgent(
@@ -390,6 +460,8 @@ REVIEWER = SubAgent(
     system_prompt=f"""你是集成评审工程师，负责发现跨专业的矛盾。
 
 {COMMON_RULES}
+
+{tools_note("integration-reviewer")}
 
 读取工作区里已完成的文件（用 ls / read_file 或 glob 查看 00_/10_/20_/30_/40_ 下的产物），逐项核对：
 1. 外观三视图尺寸 == 结构设计尺寸 == 硬件 PCB/模块占位尺寸
@@ -412,7 +484,7 @@ REVIEWER = SubAgent(
 
 不要重新设计，只做核对与问题定位。
 最后向主智能体回交：P0/P1 问题条数与结论（不超过 300 字）。""",
-    tools=ALL_TOOLS,
+    tools=TOOLS_FOR["integration-reviewer"],
 )
 
 ALL_SUBAGENTS = [REQUIREMENTS, INDUSTRIAL, MECHANICAL, HARDWARE, FIRMWARE, REVIEWER]

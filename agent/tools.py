@@ -548,7 +548,13 @@ def save_artifact(path: str = "", content: str = "") -> str:
     if path and content and "\n" in path and len(path) > 200 and "\n" not in content and len(content) < 120:
         path, content = content, path
     if not content:
-        return "save_artifact 需要 content（文件内容）。你这次传的 content 为空，请把完整内容放进 content 重试。"
+        # 实测有模型先传一次空 content「占位建文件」，打算后面再 append —— 本工具不支持分块写，
+        # 于是界面上先冒出一个「已产出 xxx」，点开却是空文件。
+        return (
+            "save_artifact 需要 content（文件内容）。你这次传的 content 为空，"
+            "请把完整内容放进 content 重试。注意：本工具不支持分块写，一次调用必须带全文；"
+            "内容太长就先精简结构再写，不要先建空文件再补。"
+        )
     guessed = ""
     if not path.strip():
         path = _guess_artifact_path(content)
